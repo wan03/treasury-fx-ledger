@@ -1,0 +1,21 @@
+# ISO-4217 -> U.S. Treasury country_currency_desc  (D-01; F5/F6/F9).
+#
+# Data, not code: expanding the supported set is ADDING ROWS, not changing logic.
+# Descriptors must match the live Treasury dataset EXACTLY (spelling/punctuation);
+# the non-gating @Tag("live") canary (T6.2) verifies them ongoing. Descriptors must
+# contain no commas (CSV simplification). USD is intentionally ABSENT -- it is an
+# in-app identity (rate 1.00, no upstream call; D-07).
+#
+# Curated CORE set (defensible, not exhaustive). The picks for unions/primaries are
+# value-neutral WITHIN a union (members share a rate) but MUST respect XOF != XAF.
+#
+# iso,country_currency_desc,note
+EUR,Euro Zone-Euro,consolidated zone series (F6); per-country euros retired 2025-03-31
+GBP,United Kingdom-Pound,1:1
+CAD,Canada-Dollar,1:1 (homonym "Dollar" disambiguated by ISO)
+AUD,Australia-Dollar,1:1 (homonym "Dollar" disambiguated by ISO)
+JPY,Japan-Yen,1:1 -- brief forces 2 dp for a zero-decimal currency (flagged, D-04)
+ARS,Argentina-Peso,1:1 -- the intra-quarter amendment fixture currency (F8)
+XOF,Senegal-Cfa Franc,BCEAO primary -- DISTINCT FROM XAF (different rate; the trap)
+XAF,Cameroon-Cfa Franc,BEAC primary -- DISTINCT FROM XOF (different rate; the trap)
+XCD,Antigua & Barbuda-East Caribbean Dollar,union primary (members share the rate)

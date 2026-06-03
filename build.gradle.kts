@@ -25,6 +25,10 @@ java {
     }
 }
 
+// Override the Spring Boot BOM's managed JUnit version (see `junitVersion` note above) so the whole
+// JUnit Platform — engine, commons, AND launcher — aligns at 1.14.2, satisfying Gradle 8.14.5.
+extra["junit-jupiter.version"] = "5.14.2"
+
 repositories {
     mavenCentral()
 }
@@ -33,7 +37,15 @@ repositories {
 val springdocVersion = "2.8.17"   // latest 2.x line (Boot 3.x); 3.x is for Boot 4
 val resilience4jVersion = "2.3.0"
 val archunitVersion = "1.4.2"
-val jqwikVersion = "1.9.3"         // aligned to JUnit Platform 1.12 (Boot 3.5.14)
+val jqwikVersion = "1.9.3"         // jqwik engine (property-based); runs on the JUnit Platform below
+// JUnit alignment. Gradle 8.14.5's test worker hard-requires junit-platform-launcher 1.14.x
+// (its processor calls OutputDirectoryCreator, added in platform 1.13). Spring Boot 3.5.14's BOM
+// force-pins junit-platform-engine/commons to 1.12.2, so the launcher (1.14) and engine (1.12)
+// split-brain and the worker dies with NoClassDefFoundError: OutputDirectoryCreator. We resolve
+// it by aligning the WHOLE platform UP to 5.14.2 — overriding the Boot-managed `junit-jupiter`
+// property (below) so engine+commons+launcher all land on 1.14.2. (5.14 is a backward-compatible
+// minor over Boot's 5.12; jqwik 1.9.3 runs on it via the stable TestEngine SPI.)
+val junitVersion = "5.14.2"
 val wiremockVersion = "3.13.2"     // latest stable 3.x; 4.x is beta
 
 dependencies {
@@ -70,10 +82,10 @@ dependencies {
 testing {
     suites {
         val test by getting(JvmTestSuite::class) {
-            useJUnitJupiter()
+            useJUnitJupiter(junitVersion)
         }
         val integrationTest by registering(JvmTestSuite::class) {
-            useJUnitJupiter()
+            useJUnitJupiter(junitVersion)
             dependencies {
                 // NOTE: the main classpath is wired in below via `extendsFrom` + the main
                 // source-set output (NOT `implementation(project())`). We disable the plain

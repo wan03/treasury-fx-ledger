@@ -42,3 +42,6 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### jqwik — property-based test run history (failure replay), regenerated locally ###
+.jqwik-database

@@ -44,19 +44,20 @@ boot path — app-as-`app` + Flyway-as-`migration` against real Postgres — is 
 
 ## Phase 2 — Domain core (pure, no framework)  — the heart
 
-- [ ] **T2.1 [P]** `Money` value object + rounding policy (BigDecimal, HALF_UP, round once, scale 2,
+- [x] **T2.1 [P]** `Money` value object + rounding policy (BigDecimal, HALF_UP, round once, scale 2,
       `compareTo`). *(constitution §1, D-04)* → AC-2.1
-- [ ] **T2.2 [P]** `RateSelector` pure function (effective_date, 6-month inclusive, calendar-month,
+- [x] **T2.2 [P]** `RateSelector` pure function (effective_date, 6-month inclusive, calendar-month,
       tiebreak). *(rate-selection.md, D-02)* → AC-2.2, AC-2.3, AC-2.4
-- [ ] **T2.3 [P]** Validation rules: description (code points), amount (`^\d{1,17}(\.\d{1,2})?$`, >0,
+- [x] **T2.3 [P]** Validation rules: description (code points), amount (`^\d{1,17}(\.\d{1,2})?$`, >0,
       reject >2dp), date (strict ISO, reject future via `Clock`). *(api-contract.md, D-05/06)* → AC-1.3/1.4/1.5
-- [ ] **T2.4 [P]** `CurrencyMap` loader + resolution policy (ISO→descriptor; USD identity;
+- [x] **T2.4 [P]** `CurrencyMap` loader + resolution policy (ISO→descriptor; USD identity;
       XOF≠XAF; unsupported/malformed). Map artifact under `resources/`. *(currency-mapping.md, D-01)* → AC-2.5, AC-2.6
-- [ ] **T2.5** Unit tests for T2.1–T2.4 incl. the **Argentina amendment** + **leap-year boundary** +
+- [x] **T2.5** Unit tests for T2.1–T2.4 incl. the **Argentina amendment** + **leap-year boundary** +
       **tie-rounding** + **XOF≠XAF** fixtures; jqwik invariants on Money. *(test-strategy.md §1)*
 
-**Gate:** domain unit suite green; **PIT mutation threshold met on `money` + `rate-selection`**;
-ArchUnit confirms `domain` has no framework imports.
+**Gate:** ✅ **MET** — domain unit suite green (47 unit tests + 3 jqwik properties + ArchUnit).
+**PIT 100% on both crown jewels** (`money` 9/9, `rate` 11/11 mutations killed); ArchUnit confirms
+`domain` has zero framework imports.
 
 ## Phase 3 — Application services & ports
 
