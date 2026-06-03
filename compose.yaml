@@ -1,22 +1,33 @@
 # =============================================================================
 # Local dev database. `spring-boot-docker-compose` (dev profile) auto-starts this
-# on `bootRun` and wires the datasource via @ServiceConnection — one-command dev.
-# Postgres everywhere (no H2) keeps NUMERIC/dialect parity with prod (D-10).
-# The migration/app least-privilege role split is provisioned in Phase 1.
+# on `bootRun` and waits for the healthcheck — one-command dev. Postgres
+# everywhere (no H2) keeps NUMERIC/dialect parity with prod (D-10).
+#
+# Least-privilege role split (data-model.md §Least privilege, constitution §9):
+# the container boots as a throwaway superuser ONLY to run db/init, which creates
+# the real `migration` (DDL) and `app` (DML) roles. The app then connects as the
+# unprivileged `app` role and Flyway as `migration` — both set explicitly in the
+# dev profile. We therefore tell Spring to manage this service's lifecycle but
+# NOT auto-wire a datasource from it (that would hand the app the superuser).
 # =============================================================================
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_DB: currency_ledger
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: change-me-app
+      POSTGRES_USER: postgres          # cluster bootstrap superuser (dev only; not the app role)
+      POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro   # creates migration + app roles on first init
+    labels:
+      # Manage lifecycle (start/stop + health wait) but skip @ServiceConnection
+      # auto-wiring — the dev profile points the datasource at the `app` role.
+      org.springframework.boot.ignore: "true"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d currency_ledger"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d currency_ledger"]
       interval: 5s
       timeout: 3s
       retries: 10

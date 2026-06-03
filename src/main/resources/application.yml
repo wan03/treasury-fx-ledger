@@ -80,7 +80,10 @@ springdoc:
 
 ---
 # =============================== dev ==========================================
-# One-command local dev: docker-compose auto-starts Postgres; Swagger on; human logs.
+# One-command local dev: docker-compose starts Postgres (and runs db/init, which
+# creates the roles); Swagger on; human-readable logs. The app connects as the
+# least-privilege `app` role and Flyway as `migration` — explicit because the
+# compose service is labelled `ignore` (no @ServiceConnection superuser wiring).
 spring:
   config:
     activate:
@@ -89,6 +92,15 @@ spring:
     enabled: true
     lifecycle-management: start_and_stop
     file: compose.yaml
+  datasource:
+    url: jdbc:postgresql://localhost:5432/currency_ledger
+    username: ${DATABASE_USERNAME:app}
+    password: ${DATABASE_PASSWORD:change-me-app}
+  flyway:
+    # DDL runs as the migration role — its own connection, distinct from the app's.
+    url: jdbc:postgresql://localhost:5432/currency_ledger
+    user: ${DB_MIGRATION_USERNAME:migration}
+    password: ${DB_MIGRATION_PASSWORD:change-me-migration}
 logging:
   level:
     com.wex.fx: DEBUG
@@ -120,7 +132,9 @@ spring:
     hikari:
       maximum-pool-size: ${DB_POOL_SIZE:10}
   flyway:
-    # DDL runs as the migration role (distinct from the app role) — least privilege.
+    # DDL runs as the migration role on its own connection (distinct from the app
+    # role) — least privilege. Same Neon database URL, migration credentials.
+    url: ${DATABASE_URL}
     user: ${DB_MIGRATION_USERNAME}
     password: ${DB_MIGRATION_PASSWORD}
 server:

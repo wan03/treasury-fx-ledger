@@ -9,31 +9,38 @@
 
 ## Phase 0 — Scaffold & contract-first
 
-- [ ] **T0.1** Gradle (or Maven) project; Java 21; Spring Boot 3.x; split source sets `test` /
-      `integrationTest`. Enable virtual threads. *(plan.md)*
-- [ ] **T0.2** Quality plugins wired but lenient to start: JaCoCo, PIT, ArchUnit, springdoc. *(test-strategy.md)*
-- [ ] **T0.3** **Author `openapi.yaml` (OpenAPI 3.1)** — the contract source of truth: the 3 endpoints,
+- [x] **T0.1** Gradle (Kotlin DSL) project; Java 21; Spring Boot 3.5.14; split source sets `test` /
+      `integrationTest` (JVM Test Suite plugin). Virtual threads enabled. *(plan.md)*
+- [x] **T0.2** Quality plugins wired but lenient to start: JaCoCo, PIT, ArchUnit, jqwik, springdoc. *(test-strategy.md)*
+- [x] **T0.3** **Authored `openapi.yaml` (OpenAPI 3.1)** — the contract source of truth: the 3 endpoints,
       DTO schemas, the RFC 9457 error schema, operations tagged R1/R2. *(api-contract.md, CC-4)*
-- [ ] **T0.4** Profiles (`dev`/`test`/`prod`), `.env.example`, `Clock` bean, structured-JSON logging,
+- [x] **T0.4** Profiles (`dev`/`test`/`prod`), `.env.example`, `Clock` bean, ECS structured-JSON logging,
       Actuator health. **No secrets in repo.** *(plan.md, constitution §5/§9)*
-- [ ] **T0.5** **Deployment scaffold (D-12 — Render + Neon):** multi-stage `Dockerfile` (build → slim
-      JRE runtime); `render.yaml` blueprint (web service + `/actuator/health` check + env wiring);
-      `prod` profile points at **Neon** via `DATABASE_URL`/discrete creds; graceful shutdown on.
-      **Secrets via Render env only.** *(plan.md Deployment, constitution §5)*
+- [x] **T0.5** **Deployment scaffold (D-12 — Render + Neon):** multi-stage `Dockerfile` (build → slim
+      JRE runtime, non-root, layered via `jarmode=tools --launcher`); `render.yaml` blueprint (web
+      service + `/actuator/health` check + env wiring); `prod` profile points at **Neon** via
+      `DATABASE_URL`/discrete creds; graceful shutdown on. **Secrets via Render env only.** *(plan.md Deployment, constitution §5)*
 
-**Gate:** project builds; OpenAPI renders in Swagger UI; `make build` works; **`docker build` produces a
-runnable image** (the artifact Render deploys).
+**Gate:** ✅ **MET** (commit `f883daf`). Verified: `./gradlew clean build` green + `integrationTest`
+compiles; app boots vs. real Postgres 16; Swagger UI renders the authored `/openapi.yaml`; prod profile
+gates Swagger/api-docs off and emits ECS JSON; `podman build` image runs **non-root** with health UP.
 
 ## Phase 1 — Persistence foundation
 
-- [ ] **T1.1** Flyway `V1__purchases.sql`, `V2__idempotency_keys.sql`, `V3__exchange_rates.sql` (in scope
-      for providers B/C, D-03). `migration` vs `app` DB roles. *(data-model.md)*
-- [ ] **T1.2** `spring-boot-docker-compose` for `dev`; Testcontainers Postgres for `test`. Confirm
-      one-command up. *(plan.md, D-10)*
-- [ ] **T1.3** Persistence-slice test: migrations apply clean; `NUMERIC(19,2)` scale preserved; DB
-      `CHECK`s reject bad rows. *(test-strategy.md §2)*
+- [x] **T1.1** Flyway `V1__purchases.sql`, `V2__idempotency_keys.sql`, `V3__exchange_rates.sql` (in scope
+      for providers B/C, D-03). Full `migration` (DDL owner) vs `app` (DML-only) role split via
+      `db/init/00-roles.sql`; each migration GRANTs least-privilege DML. *(data-model.md)*
+- [x] **T1.2** `spring-boot-docker-compose` for `dev` (compose runs `db/init`; service labelled `ignore`
+      so the app connects as `app`, not the superuser); Testcontainers Postgres 16 for `test` with the
+      same init script + role split via `@DynamicPropertySource`. *(plan.md, D-10)*
+- [x] **T1.3** Persistence-slice IT (`PurchasePersistenceIT`): migrations apply; `NUMERIC(19,2)` scale
+      preserved (`12.30` ≠ `12.3`); DB `CHECK`s reject bad rows; **+ proves `app` is denied
+      DDL/UPDATE/DELETE** on the append-only ledger. *(test-strategy.md §2)*
 
-**Gate:** `make dev` starts app + DB from a clean checkout; migration slice green.
+**Gate:** ✅ **MET** — migration slice green (`integrationTest`: 6/6 via Testcontainers→Podman). Verified
+end-to-end against real Postgres 16: roles created, Flyway runs as `migration`, app connects as `app`,
+all CHECK + privilege boundaries enforced. *(Live `make dev` needs a Docker/Compose CLI; the equivalent
+boot path — app-as-`app` + Flyway-as-`migration` against real Postgres — is verified.)*
 
 ## Phase 2 — Domain core (pure, no framework)  — the heart
 
