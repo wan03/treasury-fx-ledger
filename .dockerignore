@@ -1,0 +1,16 @@
+# Keep the Docker build context small (faster Render builds). The image is built
+# from sources via the Gradle wrapper; everything below is irrelevant to that.
+.git
+.github
+.gradle
+build
+**/build
+docs
+*.md
+!HELP.md
+.env
+.env.*
+!.env.example
+.idea
+.vscode
+*.iml

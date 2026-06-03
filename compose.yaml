@@ -1,0 +1,25 @@
+# =============================================================================
+# Local dev database. `spring-boot-docker-compose` (dev profile) auto-starts this
+# on `bootRun` and wires the datasource via @ServiceConnection — one-command dev.
+# Postgres everywhere (no H2) keeps NUMERIC/dialect parity with prod (D-10).
+# The migration/app least-privilege role split is provisioned in Phase 1.
+# =============================================================================
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: currency_ledger
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: change-me-app
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d currency_ledger"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

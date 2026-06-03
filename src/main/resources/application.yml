@@ -1,0 +1,139 @@
+# =============================================================================
+# Common configuration (all profiles). Profile-specific overrides follow below,
+# separated by `---`. Secrets NEVER live here — they come from env (.env / Render).
+# =============================================================================
+spring:
+  application:
+    name: currency-ledger
+  # D-10: virtual threads make the blocking Treasury client cheap (no reactive).
+  threads:
+    virtual:
+      enabled: true
+  # D-04 / api-contract: money & rates are JSON STRINGS, no scientific notation;
+  # requests reject unknown fields (fail fast at the edge).
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-bigdecimal-as-plain: true
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: true
+  # Flyway owns the schema; the app never auto-generates DDL.
+  sql:
+    init:
+      mode: never
+  flyway:
+    enabled: true
+    # DDL runs as the least-privilege `migration` role (see data-model.md / .env).
+    locations: classpath:db/migration
+
+# Graceful shutdown so Render's 15-min spin-down/restart is clean (D-12).
+server:
+  port: ${PORT:8080}                    # Render injects PORT; default 8080 locally
+  shutdown: graceful
+  forward-headers-strategy: framework   # behind Render's proxy (X-Forwarded-*)
+
+# fx.* — domain tunables bound via @ConfigurationProperties (wired in later phases).
+fx:
+  rates:
+    # D-03: A0 passthrough | A on-demand+cache (DEFAULT) | B ingest | C hybrid.
+    provider: ondemand
+    treasury:
+      base-url: https://api.fiscaldata.treasury.gov/services/api/fiscal_service
+      connect-timeout: 2s
+      read-timeout: 5s
+      max-retries: 2
+    window-months: 6
+    clock-zone: UTC
+    date-skew: 0s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true          # liveness/readiness for the platform health check
+        show-details: when-authorized
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+# springdoc: serve our AUTHORED contract (src/main/resources/static/openapi.yaml)
+# in Swagger UI — design-first, not code-generated (api-contract.md).
+# NOTE: `api-docs.enabled` must stay true — it gates springdoc's whole
+# auto-config, so disabling it also tears down the Swagger UI. We instead point
+# the UI at the static file (`url`) and suppress the petstore default, so the
+# authored openapi.yaml remains the single source of truth. prod turns it all off.
+springdoc:
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    url: /openapi.yaml
+    disable-swagger-default-url: true
+  api-docs:
+    enabled: true
+
+---
+# =============================== dev ==========================================
+# One-command local dev: docker-compose auto-starts Postgres; Swagger on; human logs.
+spring:
+  config:
+    activate:
+      on-profile: dev
+  docker-compose:
+    enabled: true
+    lifecycle-management: start_and_stop
+    file: compose.yaml
+logging:
+  level:
+    com.wex.fx: DEBUG
+    org.springframework.jdbc.core: DEBUG
+
+---
+# =============================== test =========================================
+# Determinism: Testcontainers Postgres (@ServiceConnection), fixed Clock, no docker-compose.
+spring:
+  config:
+    activate:
+      on-profile: test
+  docker-compose:
+    enabled: false
+
+---
+# =============================== prod =========================================
+# Neon Postgres via env; structured JSON logs; Swagger gated off; DDL via Flyway only.
+spring:
+  config:
+    activate:
+      on-profile: prod
+  docker-compose:
+    enabled: false
+  datasource:
+    url: ${DATABASE_URL}                 # Neon JDBC URL (app role — DML only)
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+  flyway:
+    # DDL runs as the migration role (distinct from the app role) — least privilege.
+    user: ${DB_MIGRATION_USERNAME}
+    password: ${DB_MIGRATION_PASSWORD}
+server:
+  error:
+    include-message: never
+    include-stacktrace: never            # never leak internals (constitution §4/§5)
+# Spring Boot structured logging → ECS JSON on stdout (Render captures it).
+logging:
+  structured:
+    format:
+      console: ecs
+springdoc:
+  swagger-ui:
+    enabled: false                       # gate the API explorer in prod
+  api-docs:
+    enabled: false                       # and the generated /v3/api-docs endpoint

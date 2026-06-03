@@ -1,0 +1,30 @@
+# =============================================================================
+# Render Blueprint (D-12) — infra-as-code for the deploy. Compute = Render (free
+# Docker web service); database = Neon (external, set the secrets in the dashboard).
+# Decoupling the DB avoids Render free-Postgres' 30-day deletion.
+# =============================================================================
+services:
+  - type: web
+    name: currency-ledger
+    runtime: docker
+    plan: free                      # spins down after 15 min idle (~1-min cold start)
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      # --- Neon (set in dashboard; never committed) ---
+      - key: DATABASE_URL           # app role — DML only
+        sync: false
+      - key: DATABASE_USERNAME
+        sync: false
+      - key: DATABASE_PASSWORD
+        sync: false
+      - key: DB_MIGRATION_USERNAME  # migration role — DDL (Flyway)
+        sync: false
+      - key: DB_MIGRATION_PASSWORD
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "5"                  # modest pool for the free instance

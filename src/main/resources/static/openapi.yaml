@@ -1,0 +1,348 @@
+# =============================================================================
+# OpenAPI 3.1 — the CONTRACT SOURCE OF TRUTH (D-09, api-contract.md).
+# Design-first: this file is authored, served via Swagger UI, and the
+# implementation is contract-tested against it. If code and this file disagree,
+# fix the code so both match. Money & rates are JSON STRINGS, never numbers.
+# =============================================================================
+openapi: 3.1.0
+info:
+  title: WEX Currency Ledger API
+  version: "1.0.0"
+  description: >-
+    Store USD purchase transactions (R1) and retrieve them converted to a target
+    currency (R2) using the U.S. Treasury *Reporting Rates of Exchange* API.
+    The selected rate is the one active on/before the purchase date within the
+    prior 6 calendar months (by `effective_date`); if none exists the conversion
+    is unfulfillable (`422 NO_RATE_AVAILABLE`). Purchases are append-only.
+  contact:
+    name: WEX Currency Ledger
+  license:
+    name: Proprietary (take-home exercise)
+servers:
+  - url: /
+    description: This service (relative)
+
+tags:
+  - name: Purchases
+    description: "R1 — store and retrieve immutable USD purchase records"
+  - name: Conversion
+    description: "R2 — converted projection of a purchase into a target currency"
+
+paths:
+  /v1/purchases:
+    post:
+      tags: [Purchases]
+      summary: Store a purchase (R1)
+      operationId: createPurchase
+      description: >-
+        Validate at the edge, assign a server-generated UUIDv7, persist as USD.
+        Safe retries require an explicit `Idempotency-Key` (two identical
+        purchases are legitimately distinct).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePurchaseRequest'
+            examples:
+              office-supplies:
+                value:
+                  description: "Office supplies"
+                  transactionDate: "2026-03-15"
+                  amount: "12.34"
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              description: URI of the created purchase
+              schema: { type: string, format: uri-reference }
+              example: /v1/purchases/0190f3e2-7e6a-7c3e-9b1a-2c4d6e8f0a11
+            ETag:
+              description: Entity tag for conditional GETs
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Purchase'
+        '400':
+          $ref: '#/components/responses/ValidationProblem'
+        '409':
+          $ref: '#/components/responses/Problem'   # IDEMPOTENCY_CONFLICT
+        '422':
+          $ref: '#/components/responses/Problem'   # CURRENCY_NOT_STORABLE
+        '500':
+          $ref: '#/components/responses/Problem'
+
+  /v1/purchases/{id}:
+    get:
+      tags: [Purchases]
+      summary: Fetch a stored purchase (USD)
+      operationId: getPurchase
+      parameters:
+        - $ref: '#/components/parameters/PurchaseId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Purchase'
+        '304':
+          description: Not Modified (ETag matched)
+        '404':
+          $ref: '#/components/responses/Problem'   # PURCHASE_NOT_FOUND
+        '500':
+          $ref: '#/components/responses/Problem'
+
+  /v1/purchases/{id}/conversions/{currencyCode}:
+    get:
+      tags: [Conversion]
+      summary: Retrieve a purchase converted to a target currency (R2)
+      operationId: convertPurchase
+      description: >-
+        Returns the original USD amount, the exchange rate used, its
+        `rateEffectiveDate`, and the converted amount (2 dp). `USD` is an in-app
+        identity (rate `1.00`, no upstream call).
+      parameters:
+        - $ref: '#/components/parameters/PurchaseId'
+        - $ref: '#/components/parameters/CurrencyCode'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              description: "Moderate TTL; NOT immutable (recent quarters can be amended)"
+              schema: { type: string }
+              example: "public, max-age=3600"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversion'
+              examples:
+                eur:
+                  value:
+                    purchaseId: "0190f3e2-7e6a-7c3e-9b1a-2c4d6e8f0a11"
+                    description: "Office supplies"
+                    transactionDate: "2026-03-15"
+                    originalAmount: "12.34"
+                    originalCurrency: "USD"
+                    targetCurrency: "EUR"
+                    exchangeRate: "0.924"
+                    rateEffectiveDate: "2025-03-31"
+                    convertedAmount: "11.40"
+                    rateSource: "U.S. Treasury Reporting Rates of Exchange"
+        '304':
+          description: Not Modified (ETag matched)
+        '400':
+          $ref: '#/components/responses/Problem'    # CURRENCY_CODE_MALFORMED
+        '404':
+          $ref: '#/components/responses/Problem'    # PURCHASE_NOT_FOUND
+        '422':
+          $ref: '#/components/responses/Problem'    # CURRENCY_UNSUPPORTED | NO_RATE_AVAILABLE
+        '429':
+          $ref: '#/components/responses/Problem'    # RATE_LIMITED
+        '502':
+          $ref: '#/components/responses/Problem'    # UPSTREAM_BAD_GATEWAY
+        '503':
+          $ref: '#/components/responses/Problem'    # UPSTREAM_UNAVAILABLE (circuit open) + Retry-After
+        '504':
+          $ref: '#/components/responses/Problem'    # UPSTREAM_TIMEOUT
+
+components:
+  parameters:
+    PurchaseId:
+      name: id
+      in: path
+      required: true
+      description: Purchase identifier (UUIDv7)
+      schema: { type: string, format: uuid }
+    CurrencyCode:
+      name: currencyCode
+      in: path
+      required: true
+      description: ISO-4217 alphabetic target currency code
+      schema: { type: string, pattern: '^[A-Z]{3}$' }
+      example: EUR
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Opaque client-supplied key for safe POST retries (≤255 chars)
+      schema: { type: string, maxLength: 255 }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: Conditional GET; returns 304 if the ETag matches
+      schema: { type: string }
+
+  schemas:
+    CreatePurchaseRequest:
+      type: object
+      additionalProperties: false
+      required: [description, transactionDate, amount]
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: "1–50 Unicode code points; trimmed; no control characters"
+          example: "Office supplies"
+        transactionDate:
+          type: string
+          format: date
+          description: "ISO local date, strict; must NOT be in the future. Old dates allowed."
+          example: "2026-03-15"
+        amount:
+          type: string
+          pattern: '^\d{1,17}(\.\d{1,2})?$'
+          description: "Positive USD decimal STRING; ≤2 dp (reject, never round); no separators/sign/sci-notation"
+          example: "12.34"
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          default: USD
+          description: "Optional; only USD is storable (any other ⇒ 422 CURRENCY_NOT_STORABLE)"
+          example: USD
+
+    Purchase:
+      type: object
+      required: [id, description, transactionDate, amount, currency, createdAt]
+      properties:
+        id: { type: string, format: uuid, example: "0190f3e2-7e6a-7c3e-9b1a-2c4d6e8f0a11" }
+        description: { type: string, example: "Office supplies" }
+        transactionDate: { type: string, format: date, example: "2026-03-15" }
+        amount:
+          type: string
+          description: "USD principal, exactly 2 dp (string)"
+          example: "12.34"
+        currency: { type: string, const: "USD", example: "USD" }
+        createdAt: { type: string, format: date-time, example: "2026-06-03T09:35:12Z" }
+
+    Conversion:
+      type: object
+      required:
+        [purchaseId, description, transactionDate, originalAmount, originalCurrency,
+         targetCurrency, exchangeRate, rateEffectiveDate, convertedAmount, rateSource]
+      properties:
+        purchaseId: { type: string, format: uuid }
+        description: { type: string }
+        transactionDate: { type: string, format: date }
+        originalAmount:
+          type: string
+          description: "USD principal (2 dp, string)"
+          example: "12.34"
+        originalCurrency: { type: string, const: "USD" }
+        targetCurrency: { type: string, pattern: '^[A-Z]{3}$', example: "EUR" }
+        exchangeRate:
+          type: string
+          description: "Treasury rate used, foreign units per 1 USD (string, variable precision)"
+          example: "0.924"
+        rateEffectiveDate:
+          type: string
+          format: date
+          description: "effective_date of the selected rate (audit)"
+          example: "2025-03-31"
+        convertedAmount:
+          type: string
+          description: "originalAmount × exchangeRate, rounded once HALF_UP to 2 dp (string)"
+          example: "11.40"
+        rateSource:
+          type: string
+          example: "U.S. Treasury Reporting Rates of Exchange"
+
+    ProblemDetail:
+      description: "RFC 9457 problem+json with machine `code` + `traceId` extensions"
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri, example: "https://api.example.com/problems/no-rate-available" }
+        title: { type: string, example: "No exchange rate available" }
+        status: { type: integer, example: 422 }
+        code:
+          type: string
+          description: "Stable machine-readable code"
+          enum:
+            - DESCRIPTION_TOO_LONG
+            - DESCRIPTION_INVALID
+            - AMOUNT_PRECISION
+            - AMOUNT_NOT_POSITIVE
+            - AMOUNT_MALFORMED
+            - DATE_INVALID
+            - DATE_IN_FUTURE
+            - CURRENCY_CODE_MALFORMED
+            - PURCHASE_NOT_FOUND
+            - IDEMPOTENCY_CONFLICT
+            - CURRENCY_NOT_STORABLE
+            - CURRENCY_UNSUPPORTED
+            - NO_RATE_AVAILABLE
+            - RATE_LIMITED
+            - UPSTREAM_BAD_GATEWAY
+            - UPSTREAM_UNAVAILABLE
+            - UPSTREAM_TIMEOUT
+            - INTERNAL
+        detail: { type: string, description: "Human-readable; no PII beyond what the caller sent" }
+        instance: { type: string, description: "Request path" }
+        traceId: { type: string, description: "Correlates with logs" }
+        errors:
+          type: array
+          description: "Field-level validation failures (present on 400)"
+          items: { $ref: '#/components/schemas/FieldError' }
+
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field: { type: string, example: "amount" }
+        code: { type: string, example: "AMOUNT_PRECISION" }
+        message: { type: string, example: "amount must have at most 2 decimal places" }
+
+  responses:
+    Problem:
+      description: Error (RFC 9457)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    ValidationProblem:
+      description: Validation failure (RFC 9457 with field-level errors[])
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          examples:
+            amount-precision:
+              value:
+                type: "https://api.example.com/problems/amount-precision"
+                title: "Invalid amount precision"
+                status: 400
+                code: "AMOUNT_PRECISION"
+                detail: "One or more fields failed validation"
+                instance: "/v1/purchases"
+                traceId: "b6c1f0e2-..."
+                errors:
+                  - field: "amount"
+                    code: "AMOUNT_PRECISION"
+                    message: "amount must have at most 2 decimal places"
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        AuthN/AuthZ is assumed at an upstream gateway (out of scope). The scheme
+        is documented to mark the seam; it is NOT enforced by this service.
+
+# Seam only — not enforced here (gateway concern).
+security: []
