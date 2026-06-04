@@ -61,15 +61,23 @@ boot path — app-as-`app` + Flyway-as-`migration` against real Postgres — is 
 
 ## Phase 3 — Application services & ports
 
-- [ ] **T3.1** Ports: `PurchaseRepository`, `ExchangeRateProvider`. *(plan.md)*
-- [ ] **T3.2** `StorePurchaseService` (validate → assign UUIDv7 → persist; idempotency in one tx).
+- [x] **T3.1** Ports: `PurchaseRepository`, `ExchangeRateProvider` (+ `IdGenerator`, `Transactor`,
+      `IdempotencyStore`). *(plan.md)*
+- [x] **T3.2** `StorePurchaseService` (validate → assign UUIDv7 → persist; idempotency in one tx).
       *(D-08, data-model.md)* → AC-1.1, AC-1.2, AC-1.7
-- [ ] **T3.3** `ConvertPurchaseService` (load purchase → USD identity short-circuit → resolve currency
+- [x] **T3.3** `ConvertPurchaseService` (load purchase → USD identity short-circuit → resolve currency
       → provider.findRate → Money multiply/round → assemble response). *(rate-selection.md, D-07)*
       → AC-2.1, AC-2.5, AC-2.7
-- [ ] **T3.4** Persistence adapter (Spring Data JDBC) + `Money`↔`NUMERIC` converter; UUIDv7 generator.
+- [x] **T3.4** Persistence adapter (Spring Data JDBC) + `Money`↔`NUMERIC` converter; UUIDv7 generator
+      (`Uuid7IdGenerator`), `SpringTransactor`, `JdbcIdempotencyStore` (jsonb replay), `ApplicationWiring`.
 
-**Gate:** service-level tests green against the persistence slice; idempotency atomicity proven.
+**Gate:** ✅ **MET** — service-level fast tests green (13 application tests with hand-written fakes:
+`StorePurchaseService` 7, `ConvertPurchaseService` 6) and the persistence slice proven against
+prod-parity Postgres (`StorePurchasePersistenceIT`: scale-2 + timestamptz round-trip, jsonb replay
+fidelity, PK-violation → `DuplicateIdempotencyKeyException`, and **dual-insert atomicity** — a forced
+failure rolls back both the purchase and the idempotency key under the real `Transactor`). ArchUnit now
+also fences the **application** layer as framework-free (no Spring/Jackson; tx boundary is the
+`Transactor` port).
 
 ## Phase 4 — Treasury adapters (A0/A/B/C) + resilience
 

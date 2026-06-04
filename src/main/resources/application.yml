@@ -35,6 +35,9 @@ server:
 
 # fx.* — domain tunables bound via @ConfigurationProperties (wired in later phases).
 fx:
+  # POST idempotency replay window (data-model.md). After it lapses the swept key may be reused.
+  idempotency:
+    ttl: 24h
   rates:
     # D-03: A0 passthrough | A on-demand+cache (DEFAULT) | B ingest | C hybrid.
     provider: ondemand
