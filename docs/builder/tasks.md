@@ -164,16 +164,37 @@ the full E2E stack where real responses flow end-to-end.
 
 ## Phase 6 — Integration / E2E & final gates
 
-- [ ] **T6.1** `@SpringBootTest` E2E (Testcontainers + WireMock): golden path; no-rate `422`;
-      **amendment selects 1230**; idempotency replay. *(test-strategy.md §3)*
-- [ ] **T6.2** Non-gating `@Tag("live")` canary: live fields present; **every map entry resolves**;
-      `XOF`≠`XAF`. *(currency-mapping.md, test-strategy.md §4)*
-- [ ] **T6.3** Tighten gates: JaCoCo floor, PIT threshold, ArchUnit rules all enforced in CI; CI split
-      PR (fast) vs nightly (mutation + canary).
-- [ ] **T6.4** R↔test traceability matrix filled; spec.md acceptance checklist all ticked.
+- [x] **T6.1** `@SpringBootTest` E2E (Testcontainers + WireMock): golden path; no-rate `422`;
+      **amendment selects 1230**; idempotency replay. *(test-strategy.md §3)* — `PurchaseConversionE2EIT`
+      (4 tests, RANDOM_PORT, real Postgres least-privilege role + WireMock Treasury; distinct currency
+      per test so provider-A's cache never bleeds). Green under Podman.
+- [x] **T6.2** Non-gating `@Tag("live")` canary: live fields present; **every map entry resolves**;
+      `XOF`≠`XAF`. *(currency-mapping.md, test-strategy.md §4)* — `TreasuryLiveCanaryIT` (plain JUnit,
+      no container; bounded-timeout `RestClient` straight at prod Treasury; 24-month lookback so a stale
+      quarter doesn't flake). Excluded by default; opt in with `-Plive` / `make canary`.
+- [x] **T6.3** Tighten gates: JaCoCo floor, PIT threshold, ArchUnit rules all enforced in CI; CI split
+      PR (fast) vs nightly (mutation + canary). — `integrationTest` now `excludeTags("live")` unless
+      `-Plive`; `jacocoTestCoverageVerification` (core `domain.*`+`application.*` ≥ 85% instruction)
+      wired into `check`; PIT `mutationThreshold` 0 → **85** (measured 92%); `.github/workflows/ci.yml`
+      (PR fast gate) + `nightly.yml` (integration · mutation · non-gating canary); `make canary`/`mutation`.
+- [x] **T6.4** R↔test traceability matrix filled; spec.md acceptance checklist all ticked. — matrix in
+      `test-strategy.md` maps every AC-1.x/AC-2.x/CC-x to concrete `class#method` across U/Sl/App/IT/E2E/Canary;
+      `spec.md` checklist ticked (the two operational/README items defer to T7.1/T7.2 by design).
 
-**Gate (definition of done):** every AC in `spec.md` has a passing test; the acceptance checklist is
-complete; `make dev` runs from a clean checkout; assumptions list compiled for the submission.
+**Gate (definition of done) — MET (build verification of `make dev` clean-checkout deferred to T7.2/T7.4):**
+every AC in `spec.md` has a passing test (matrix above); the acceptance checklist is complete bar the two
+Phase-7-owned items. **Assumptions compiled for the submission** (surfaced in the README by T7.1):
+1. **`effective_date`, not `record_date`** drives selection — intra-quarter amendments are real (D-02/F8).
+2. **Reject >2dp amounts, never round** the principal; the only rounding is the derived conversion (D-04/D-05).
+3. **Future-dated purchases are rejected; too-old ones store** but fail conversion `422 NO_RATE_AVAILABLE` (D-06).
+4. **`USD` is an in-app identity** (rate `1.00`, no Treasury call) and is never in the currency map (D-07).
+5. **Currency in = ISO-4217**, resolved through a curated version-controlled map; **`XOF`≠`XAF`** (F5/F9).
+6. **6-month window is inclusive**, calendar-month arithmetic (leap-day aware) (D-02/F4).
+7. **UUIDv7, server-generated**; purchases are **append-only** (no `PUT`/`PATCH`/`DELETE`) (D-08/D-09).
+8. **Money & rates cross the wire as JSON strings**; errors are RFC 9457 `problem+json` (D-09).
+9. **Provider A (`ondemand`, cache) is the production default**; B/C (ingest/hybrid) ship behind config (D-03).
+10. **Single 1000-row window page** assumed sufficient per currency (quarterly history is small); full
+    pagination is a documented future extension.
 
 ## Phase 7 — Submission polish
 

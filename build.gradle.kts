@@ -106,6 +106,14 @@ testing {
                 all {
                     testTask.configure {
                         shouldRunAfter(test)
+                        // Constitution §10: the gating suite makes ZERO real network calls. The live
+                        // Treasury canary (@Tag("live"), T6.2) is therefore excluded by default and
+                        // opted in explicitly with `-Plive` (nightly/manual), so it never gates a PR.
+                        if (!project.hasProperty("live")) {
+                            options {
+                                (this as JUnitPlatformOptions).excludeTags("live")
+                            }
+                        }
                     }
                 }
             }
@@ -146,6 +154,34 @@ tasks.named<JacocoReport>("jacocoTestReport") {
     }
 }
 
+// The floor is enforced ONLY on the framework-free core (`domain.*` + `application.*`), which the
+// fast `test` suite exercises exhaustively (measured 85–100% per package). The adapters, config and
+// bootstrap class are deliberately covered by the heavy `integrationTest` suite (Testcontainers +
+// WireMock) instead, so they read near-zero in THIS report — including them would force a meaningless
+// ~30% floor. Mutation testing (PIT, above) is the real assertion-quality gate; this is the guardrail.
+tasks.named<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
+    dependsOn(tasks.named("jacocoTestReport"))
+    classDirectories.setFrom(
+        files(classDirectories.files.map { dir ->
+            fileTree(dir) { include("com/wex/fx/domain/**", "com/wex/fx/application/**") }
+        })
+    )
+    violationRules {
+        rule {
+            element = "BUNDLE"
+            limit {
+                counter = "INSTRUCTION"
+                value = "COVEREDRATIO"
+                minimum = "0.85".toBigDecimal()
+            }
+        }
+    }
+}
+// Wire the floor into the fast gating build so a PR fails on a core-coverage regression.
+tasks.named("check") {
+    dependsOn(tasks.named("jacocoTestCoverageVerification"))
+}
+
 // --- PIT mutation testing: assertion strength on the crown-jewel packages ---
 // Run on demand / nightly (not wired into `check` to keep PRs fast).
 pitest {
@@ -155,7 +191,10 @@ pitest {
     pitestVersion.set("1.25.3")
     threads.set(4)
     timestampedReports.set(false)
-    mutationThreshold.set(0) // lenient to start (T0.2); raised once the domain lands
+    // T6.3: raised off the lenient 0 now the domain has landed. Measured 92% mutation / 93% test
+    // strength on `com.wex.fx.domain.*` (83 mutations, 76 killed); 85 keeps a safe margin against
+    // the few equivalent/empty-return survivors while still failing the build on a real regression.
+    mutationThreshold.set(85)
 }
 
 // --- Flyway CLI (`make db-migrate`) — reads env / .env ----------------------

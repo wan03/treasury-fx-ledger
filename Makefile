@@ -9,7 +9,7 @@ GRADLE := ./gradlew
 PODMAN_SOCK ?= $(XDG_RUNTIME_DIR)/podman/podman.sock
 TC_ENV := DOCKER_HOST=unix://$(PODMAN_SOCK) TESTCONTAINERS_RYUK_DISABLED=true
 
-.PHONY: help dev test integration build db-migrate clean openapi podman-up
+.PHONY: help dev test integration canary mutation build db-migrate clean openapi podman-up
 
 help:           ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n",$$1,$$2}'
@@ -20,8 +20,14 @@ dev:            ## Run locally (dev profile); docker-compose auto-starts Postgre
 test:           ## Fast unit + slice tests (no live network, no containers)
 	$(GRADLE) test
 
-integration:    ## Testcontainers + WireMock integration/E2E (needs Podman socket)
+integration:    ## Testcontainers + WireMock integration/E2E (needs Podman socket; excludes live)
 	$(TC_ENV) $(GRADLE) integrationTest
+
+canary:         ## Live Treasury probe ONLY (@Tag live, real network; non-gating)
+	$(GRADLE) integrationTest -Plive --tests '*TreasuryLiveCanaryIT'
+
+mutation:       ## PIT mutation testing on the money + rate-selection core
+	$(GRADLE) pitest
 
 build:          ## Production jar + all gates
 	$(GRADLE) clean build

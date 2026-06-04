@@ -103,11 +103,21 @@ D-07 (USD identity), D-03 (resilience).
 
 ## Review & acceptance checklist (gate before "done")
 
-- [ ] Every AC above has at least one automated test, mapped in the R↔test matrix.
-- [ ] Money path contains no `float`/`double`; mutation score on `money` + `rate-selection` meets the
-      threshold.
-- [ ] The Argentina amendment fixture and the leap-year boundary fixture both pass.
-- [ ] `XOF ≠ XAF` is asserted; `USD` identity path has no upstream call.
-- [ ] OpenAPI served; errors are RFC 9457; no PII/amounts in logs (verified by a test or review).
-- [ ] One-command local run works from a clean checkout (`make dev`).
+- [x] Every AC above has at least one automated test, mapped in the R↔test matrix.
+      *(`test-strategy.md` § Requirement traceability — every AC-1.x / AC-2.x / CC-x row is populated.)*
+- [x] Money path contains no `float`/`double`; mutation score on `money` + `rate-selection` meets the
+      threshold. *(Verified: the only `float` in `main` is the resilience `failureRateThreshold` knob —
+      not the money path; PIT scores 92% on `domain.*` ≥ the 85 threshold.)*
+- [x] The Argentina amendment fixture and the leap-year boundary fixture both pass.
+      *(`RateSelectorTest#argentina_amendment_…` + `#window_floor_uses_calendar_month_arithmetic_into_a_leap_day`;
+      amendment also end-to-end in `PurchaseConversionE2EIT#convert_selectsIntraQuarterAmendment_…`.)*
+- [x] `XOF ≠ XAF` is asserted; `USD` identity path has no upstream call.
+      *(`CurrencyMapTest#xof_and_xaf_resolve_to_different_descriptors` + live `TreasuryLiveCanaryIT#xof_isNotXaf_…`;
+      `ConvertPurchaseServiceTest#usd_target_is_an_in_app_identity_with_no_provider_call`.)*
+- [x] OpenAPI served; errors are RFC 9457; no PII/amounts in logs (verified by a test or review).
+      *(springdoc serves the authored `openapi.yaml`; slice tests assert `problem+json`+`code`+`traceId`;
+      grep confirms no `description`/`amount` in any `log.*`. CC-4 message-level validation = documented follow-up.)*
+- [ ] One-command local run works from a clean checkout (`make dev`). *(Wiring is exercised by the
+      `@SpringBootTest` context-load + E2E; the full clean-checkout `bootRun`+compose boot is owned by **T7.2/T7.4**.)*
 - [ ] All `PROPOSED`-but-defaulted behaviors are listed in the submission's "assumptions" section.
+      *(Compiled in `tasks.md` Phase 6 gate notes; surfaced in the README by **T7.1**.)*

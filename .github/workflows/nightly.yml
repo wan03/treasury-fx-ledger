@@ -1,0 +1,88 @@
+# =============================================================================
+# NIGHTLY — the heavy gates that are too slow or too live for a PR.
+# Three independent jobs (test-strategy §4/§5):
+#   • integration — Testcontainers (Postgres) + WireMock, excluding @Tag("live").
+#   • mutation    — PIT assertion-strength on the money + rate-selection core.
+#   • canary      — the LIVE Treasury probe (-Plive). NON-GATING by design
+#                   (continue-on-error): real-network drift is a signal to read,
+#                   never a reason to block. GitHub runners ship Docker, so
+#                   Testcontainers uses it directly (no Podman/Ryuk shim).
+# Runs on a schedule and on demand — never on pull_request.
+# =============================================================================
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC daily
+  workflow_dispatch: # manual "Run workflow" button
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: integration (Testcontainers + WireMock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # @Tag("live") is excluded by default in build.gradle.kts, so this stays offline-deterministic.
+      - name: ./gradlew integrationTest
+        run: ./gradlew integrationTest --no-daemon --stacktrace
+      - name: Publish integration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-report
+          path: build/reports/tests/integrationTest
+          if-no-files-found: ignore
+
+  mutation:
+    name: mutation (PIT, domain core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: ./gradlew pitest
+        run: ./gradlew pitest --no-daemon --stacktrace
+      - name: Publish mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pitest-report
+          path: build/reports/pitest
+          if-no-files-found: ignore
+
+  canary:
+    name: live Treasury canary (non-gating)
+    runs-on: ubuntu-latest
+    # The canary hits the real Treasury API; a rename/outage must SURFACE, not fail the pipeline.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # -Plive lifts the default exclusion so only the live-tagged probe runs.
+      - name: ./gradlew integrationTest -Plive --tests '*TreasuryLiveCanaryIT'
+        run: ./gradlew integrationTest -Plive --tests '*TreasuryLiveCanaryIT' --no-daemon --stacktrace
+      - name: Publish canary report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-test-report
+          path: build/reports/tests/integrationTest
+          if-no-files-found: ignore
