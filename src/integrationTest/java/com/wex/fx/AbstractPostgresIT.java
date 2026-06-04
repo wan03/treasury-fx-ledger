@@ -25,7 +25,7 @@ import org.testcontainers.utility.MountableFile;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-abstract class AbstractPostgresIT {
+public abstract class AbstractPostgresIT {
 
     static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>(

@@ -29,6 +29,9 @@ final class TreasuryRateFetcher implements RateFetcher {
     static final String PATH = "/v1/accounting/od/rates_of_exchange";
     private static final String FIELDS =
             "country_currency_desc,exchange_rate,effective_date,record_date";
+    // Window fetch (ingest/sync) pulls every row in range. Treasury's per-currency history is quarterly
+    // and small, so one generous page covers it; full pagination is a documented future extension.
+    private static final int WINDOW_PAGE_SIZE = 1000;
 
     private final RestClient client;
 
@@ -39,16 +42,29 @@ final class TreasuryRateFetcher implements RateFetcher {
     @Override
     public List<ExchangeRate> fetch(
             String descriptor, LocalDate effectiveOnOrBefore, LocalDate effectiveOnOrAfter) {
-        String filter = "country_currency_desc:eq:" + descriptor
-                + ",effective_date:lte:" + effectiveOnOrBefore
-                + ",effective_date:gte:" + effectiveOnOrAfter;
+        // F7 single-row push-down: the server sorts and returns just the selected row (~1 over the wire).
+        return query(filter(descriptor, effectiveOnOrBefore, effectiveOnOrAfter), 1);
+    }
 
+    @Override
+    public List<ExchangeRate> fetchWindow(String descriptor, LocalDate from, LocalDate to) {
+        // Every row in [from, to] (amendments included) so the local store can backfill/reconcile.
+        return query(filter(descriptor, to, from), WINDOW_PAGE_SIZE);
+    }
+
+    private static String filter(String descriptor, LocalDate lte, LocalDate gte) {
+        return "country_currency_desc:eq:" + descriptor
+                + ",effective_date:lte:" + lte
+                + ",effective_date:gte:" + gte;
+    }
+
+    private List<ExchangeRate> query(String filter, int pageSize) {
         TreasuryRatesPayload payload = client.get()
                 .uri(uri -> uri.path(PATH)
                         .queryParam("fields", FIELDS)
                         .queryParam("filter", filter)
                         .queryParam("sort", "-effective_date")
-                        .queryParam("page[size]", "1")
+                        .queryParam("page[size]", Integer.toString(pageSize))
                         .queryParam("format", "json")
                         .build())
                 .retrieve()

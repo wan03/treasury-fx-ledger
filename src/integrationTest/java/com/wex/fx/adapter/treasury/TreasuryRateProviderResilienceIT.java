@@ -177,6 +177,12 @@ class TreasuryRateProviderResilienceIT {
             calls++;
             return delegate.fetch(descriptor, onOrBefore, onOrAfter);
         }
+
+        @Override
+        public List<ExchangeRate> fetchWindow(String descriptor, LocalDate from, LocalDate to) {
+            calls++;
+            return delegate.fetchWindow(descriptor, from, to);
+        }
     }
 
     private static void assertUpstreamError(RateFetcher fetcher) {

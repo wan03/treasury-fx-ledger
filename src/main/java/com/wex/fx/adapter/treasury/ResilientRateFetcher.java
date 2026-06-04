@@ -46,8 +46,18 @@ final class ResilientRateFetcher implements RateFetcher {
     @Override
     public List<ExchangeRate> fetch(
             String descriptor, LocalDate effectiveOnOrBefore, LocalDate effectiveOnOrAfter) {
-        Supplier<List<ExchangeRate>> call =
-                () -> delegate.fetch(descriptor, effectiveOnOrBefore, effectiveOnOrAfter);
+        return guarded(() -> delegate.fetch(descriptor, effectiveOnOrBefore, effectiveOnOrAfter));
+    }
+
+    @Override
+    public List<ExchangeRate> fetchWindow(String descriptor, LocalDate from, LocalDate to) {
+        // The ingest/lazy-fill bulk pull rides the same retry + breaker as the per-request fetch, so a
+        // failing Treasury trips the one shared breaker and the sync stops hammering it (constitution §7).
+        return guarded(() -> delegate.fetchWindow(descriptor, from, to));
+    }
+
+    /** Apply the retry-over-breaker composition and collapse every failure into one domain signal. */
+    private List<ExchangeRate> guarded(Supplier<List<ExchangeRate>> call) {
         Supplier<List<ExchangeRate>> guarded =
                 Retry.decorateSupplier(retry, CircuitBreaker.decorateSupplier(circuitBreaker, call));
         try {

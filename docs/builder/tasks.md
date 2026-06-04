@@ -99,22 +99,40 @@ also fences the **application** layer as framework-free (no Spring/Jackson; tx b
       `RateProviderUnavailableException{UPSTREAM_ERROR,TIMEOUT,CIRCUIT_OPEN}`. Breaker `minimumNumberOfCalls`
       set explicitly (≤ window) so it can actually open; timeout classification handles the JDK client's
       `HttpTimeoutException` (not just `SocketTimeoutException`).
-- [ ] **T4.4** Provider **B ingest** (`provider=ingest`): `exchange_rates` table (data-model.md `V3`);
-      a **triggered + scheduled sync** that backfills and **reconciles amendments**; local indexed
-      selection query (`= desc AND effective_date <= d ORDER BY effective_date DESC LIMIT 1`). *(D-03, data-model.md)*
-- [ ] **T4.5** Provider **C hybrid** (`provider=hybrid`): local-first over B with **lazy fill on miss** +
-      **current-quarter background refresh**. *(D-03)*
-- [~] **T4.6** Adapter slices vs **WireMock** / Testcontainers: outgoing-query assertion; captured-payload
+- [x] **T4.4** Provider **B ingest** (`provider=ingest`): `exchange_rates` table (data-model.md `V3`);
+      a **startup backfill + scheduled reconcile** that backfills and **reconciles amendments**; local
+      indexed selection over the table. *(D-03, data-model.md)* — `IngestExchangeRateProvider` +
+      `ExchangeRateStore` (idempotent upsert keyed on `(descriptor, effective_date)`) + `RateSyncService`
+      (`@EventListener(ApplicationReadyEvent)` backfill + `@Scheduled` reconcile at `fx.rates.sync.interval`).
+      **DEVIATION:** the local read runs the pure **`RateSelector` over the candidate window**, not a raw
+      SQL `… ORDER BY effective_date DESC LIMIT 1`. Keeping the *one* pure selector authoritative across all
+      four providers is what makes the parity test meaningful (the 6-month window floor + record_date
+      tiebreak live in exactly one place); the index on `(descriptor, effective_date DESC)` still makes the
+      candidate fetch cheap. **DEVIATION:** sync scope is the **full curated currency universe** over
+      `fx.rates.sync.window-months` (24), not just the current quarter — a cold instance is immediately
+      serviceable offline; the scheduled pass re-pulls the window to catch current-quarter amendments (F8).
+- [x] **T4.5** Provider **C hybrid** (`provider=hybrid`): local-first over the store with **lazy fill on
+      miss** (fetch-window → write-through upsert → serve), then pure-local on the next read. *(D-03)* —
+      `HybridExchangeRateProvider`. A lazy-fill outage **propagates** `RateProviderUnavailableException`
+      (never collapses an upstream-down into a false `422 NO_RATE`); the scheduled `RateSyncService` doubles
+      as the current-quarter background refresh.
+- [x] **T4.6** Adapter slices vs **WireMock** / Testcontainers: outgoing-query assertion; captured-payload
       parse; empty `data[]` → no-rate; resilience behaviors; schema tolerance; B sync + amendment
       reconciliation. **Provider-parity test:** all four return the same rate for a fixture date. *(test-strategy.md §2, §4)*
-      — **A-side done** (`TreasuryRateFetcherTest`, `CachingExchangeRateProviderTest`,
-      `TreasuryRateProviderResilienceIT`); B sync + 4-way provider-parity land with 4b.
+      — **A-side** (`TreasuryRateFetcherTest`, `CachingExchangeRateProviderTest`,
+      `TreasuryRateProviderResilienceIT`); **B/C** (`TreasuryRateIngestIT`: sync backfill→B local selection of
+      the amendment, idempotent re-sync update+insert, C lazy-fill then offline local hit); **four-way parity**
+      (`ExchangeRateProviderParityIT`: A0/A/B/C all pick 1230 @ 2025-04-15 for a 2025-05-01 purchase).
 
-**Gate (4a — A0/A + resilience):** ✅ MET. Default `ondemand` provider boots end-to-end (context-boot IT);
-14 fast adapter unit tests + 4 resilience ITs green; F7 query asserted; empty `data[]` → no-rate;
-schema-tolerance + contract-violation mapping; retries fire on 5xx/timeout only, breaker opens then
-fast-fails, 4xx neither retried nor counted; quarter-aware + negative caching with no exception poisoning.
-**Remaining for 4b:** B ingest, C hybrid, four-way provider-parity test.
+**Gate (4 — A0/A/B/C + resilience):** ✅ MET. All four providers config-selectable behind the port and
+proven equivalent on the load-bearing intra-quarter-amendment fixture (`ExchangeRateProviderParityIT`).
+Default `ondemand` boots end-to-end (context-boot IT); 14 fast adapter unit tests + 8 ITs green
+(4 resilience + 3 ingest/hybrid + 1 parity). F7 query asserted; empty `data[]` → no-rate; schema-tolerance
++ contract-violation mapping; retries on 5xx/timeout only, breaker opens then fast-fails, 4xx neither
+retried nor counted; quarter-aware + negative caching with no exception poisoning. B/C: idempotent upsert
+reconciles amendments (update-in-place + insert, keyed on `(descriptor, effective_date)`); C lazy-fills an
+empty window then serves it locally with Treasury unreachable (write-through, self-healing). All against
+real Postgres on the least-privilege `app` role (no DELETE — tests isolate via unique descriptors).
 
 ## Phase 5 — Web layer & error contract
 

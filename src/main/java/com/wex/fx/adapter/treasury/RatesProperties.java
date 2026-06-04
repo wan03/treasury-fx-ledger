@@ -21,7 +21,8 @@ public record RatesProperties(
         @DefaultValue Treasury treasury,
         @DefaultValue("6") int windowMonths,
         @DefaultValue Cache cache,
-        @DefaultValue Resilience resilience) {
+        @DefaultValue Resilience resilience,
+        @DefaultValue Sync sync) {
 
     /**
      * HTTP knobs for the Treasury fetcher. Timeouts are always bounded (never unbounded waits on an
@@ -60,4 +61,14 @@ public record RatesProperties(
             @DefaultValue("50") float failureRateThreshold,
             @DefaultValue("30s") Duration waitDurationInOpenState,
             @DefaultValue("3") int permittedCallsInHalfOpenState) {}
+
+    /**
+     * Ingest/sync knobs for providers B/C. {@code windowMonths} bounds how far back the backfill pulls
+     * (the local store can only answer dates it has ingested); {@code interval} is the scheduled-reconcile
+     * cadence — short enough to catch a current-quarter amendment, long enough to stay light on Treasury.
+     * Inert under A0/A.
+     */
+    public record Sync(
+            @DefaultValue("24") int windowMonths,
+            @DefaultValue("6h") Duration interval) {}
 }

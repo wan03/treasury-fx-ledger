@@ -70,6 +70,12 @@ fx:
       failure-rate-threshold: 50
       wait-duration-in-open-state: 30s
       permitted-calls-in-half-open-state: 3
+    # Providers B (ingest) / C (hybrid) only: the out-of-band sync that backfills/reconciles the local
+    # exchange_rates table. window-months bounds how far back to ingest; interval is the reconcile cadence
+    # (catches current-quarter amendments). Inert under A0/A.
+    sync:
+      window-months: 24
+      interval: 6h
 
 management:
   endpoints:
