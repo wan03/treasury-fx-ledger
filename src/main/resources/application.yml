@@ -9,6 +9,12 @@ spring:
   threads:
     virtual:
       enabled: true
+  # Framework MVC exceptions (405 on an unmapped verb, 415/406 on media-type mismatch, 404 on an
+  # unknown route, 400 on an unreadable body) render as RFC 9457 problem+json, then ApiExceptionHandler
+  # enriches them with our machine `code` + `traceId`. Without this they would be bare Servlet errors.
+  mvc:
+    problemdetails:
+      enabled: true
   # D-04 / api-contract: money & rates are JSON STRINGS, no scientific notation;
   # requests reject unknown fields (fail fast at the edge).
   jackson:
@@ -32,6 +38,13 @@ server:
   port: ${PORT:8080}                    # Render injects PORT; default 8080 locally
   shutdown: graceful
   forward-headers-strategy: framework   # behind Render's proxy (X-Forwarded-*)
+  # Request-size hardening (constitution §9, CC-2). Our payloads are tiny by contract (a ≤50-char
+  # description, a short amount/date, a ≤255-char Idempotency-Key), so cap headers and bodies low: an
+  # oversized request is rejected at the connector before it reaches a handler, never silently truncated.
+  max-http-request-header-size: 16KB
+  tomcat:
+    max-http-form-post-size: 16KB       # form posts are not a route we accept; keep the bound tight
+    max-swallow-size: 16KB              # abort (don't drain) a body that exceeds the limit
 
 # fx.* — domain tunables bound via @ConfigurationProperties (wired in later phases).
 fx:

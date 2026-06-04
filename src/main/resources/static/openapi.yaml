@@ -291,6 +291,14 @@ components:
             - UPSTREAM_UNAVAILABLE
             - UPSTREAM_TIMEOUT
             - INTERNAL
+            # Protocol-level codes: emitted when the framework rejects a request before it reaches a
+            # handler (unreadable/oversized body, unknown route, unmapped verb, media-type mismatch).
+            # The advice enriches these framework problems with the same `code` + `traceId` shape.
+            - MALFORMED_REQUEST
+            - NOT_FOUND
+            - METHOD_NOT_ALLOWED
+            - NOT_ACCEPTABLE
+            - UNSUPPORTED_MEDIA_TYPE
         detail: { type: string, description: "Human-readable; no PII beyond what the caller sent" }
         instance: { type: string, description: "Request path" }
         traceId: { type: string, description: "Correlates with logs" }

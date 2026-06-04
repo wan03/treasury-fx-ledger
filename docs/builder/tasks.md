@@ -136,17 +136,31 @@ real Postgres on the least-privilege `app` role (no DELETE — tests isolate via
 
 ## Phase 5 — Web layer & error contract
 
-- [ ] **T5.1** Controllers: `POST /v1/purchases`, `GET /v1/purchases/{id}`,
+- [x] **T5.1** Controllers: `POST /v1/purchases`, `GET /v1/purchases/{id}`,
       `GET /v1/purchases/{id}/conversions/{currencyCode}`; DTOs as records; money/rates as strings.
-- [ ] **T5.2** `@ControllerAdvice` → RFC 9457 `application/problem+json` with `code`, `detail`,
-      `traceId`, `errors[]`; the full status discipline (400/404/409/422/429/502-504). *(api-contract.md)*
-      → CC-1, AC-1.3/1.4/1.5, AC-2.4/2.6/2.7
-- [ ] **T5.3** Security/hygiene: TLS config notes, request-size limits, CORS deny-by-default, **no
-      amounts/PII in logs**, caching headers (`ETag`, moderate `max-age`). *(constitution §5, api-contract.md)*
-      → CC-2
-- [ ] **T5.4** `@WebMvcTest` slice for both endpoints (success + every error code). *(test-strategy.md §2)*
+      Added `GetPurchaseService` (R1 read use case) + `CreatePurchaseRequest`. Money-as-string is enforced
+      globally by `config/JacksonConfig` (`BigDecimal` → `ToStringSerializer`), keeping the application
+      DTOs framework-free (ArchUnit) — `write-bigdecimal-as-plain` alone leaves a JSON *number*.
+- [x] **T5.2** `@RestControllerAdvice extends ResponseEntityExceptionHandler` → RFC 9457
+      `application/problem+json` with `code`, `detail`, `traceId`, `errors[]`; full status discipline
+      (400/404/405/409/422/500/502-504). Framework protocol errors (405/415/406/404/400) are enriched in
+      `handleExceptionInternal` so they carry the same shape — a 405 is how append-only (D-09) shows up.
+      *(api-contract.md)* → CC-1, AC-1.3/1.4/1.5, AC-2.4/2.6/2.7
+- [x] **T5.3** Security/hygiene `WebConfig`: `ShallowEtagHeaderFilter` (conditional GET → 304),
+      security-headers filter (HSTS, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, CSP on `/v1`),
+      deny-by-default CORS; request-size limits + `spring.mvc.problemdetails.enabled` in `application.yml`.
+      Logs stay PII-free (single log site in the advice: code/traceId/path only). **Deviation:**
+      `Cache-Control: private` (not the doc's `public`) because both bodies embed the `description` (PII)
+      — documented in api-contract.md. *(constitution §5/§9, api-contract.md)* → CC-2
+- [x] **T5.4** `@WebMvcTest` slices for both controllers — 21 tests: success + every error code, the
+      problem+json shape (code/traceId/errors[]), money-as-string, headers (Location, Idempotency-Replayed,
+      ETag/304, Cache-Control, Retry-After on 503, security headers), and the append-only 405.
+      *(test-strategy.md §2)*
 
-**Gate:** web slice green; OpenAPI matches implemented shapes (contract test).
+**Gate:** web slice green (21 `@WebMvcTest` tests). OpenAPI `code` enum + error catalog synced to the
+implementation (added the 5 protocol codes); the slice tests assert the implemented shapes match the
+contract. *Deferred to Phase 6:* an automated OpenAPI response-schema validation test, which belongs with
+the full E2E stack where real responses flow end-to-end.
 
 ## Phase 6 — Integration / E2E & final gates
 

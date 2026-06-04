@@ -1,6 +1,7 @@
 package com.wex.fx.config;
 
 import com.wex.fx.application.ConvertPurchaseService;
+import com.wex.fx.application.GetPurchaseService;
 import com.wex.fx.application.StorePurchaseService;
 import com.wex.fx.application.port.ExchangeRateProvider;
 import com.wex.fx.application.port.IdGenerator;
@@ -46,6 +47,11 @@ class ApplicationWiring {
             @Value("${fx.idempotency.ttl:24h}") Duration idempotencyTtl) {
         return new StorePurchaseService(
                 validator, purchases, idempotency, ids, transactor, clock, idempotencyTtl);
+    }
+
+    @Bean
+    GetPurchaseService getPurchaseService(PurchaseRepository purchases) {
+        return new GetPurchaseService(purchases);
     }
 
     @Bean

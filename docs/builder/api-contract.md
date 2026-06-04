@@ -95,6 +95,14 @@ Validation errors additionally carry an `errors[]` array of `{field, code, messa
 | 429 | `RATE_LIMITED` | throttled (if rate limiting enabled) |
 | 502/503/504 | `UPSTREAM_*` | Treasury failure / circuit-open (`503` + `Retry-After`) / timeout |
 | 500 | `INTERNAL` | unexpected — never leak internals/stack |
+| 400 | `MALFORMED_REQUEST` | unreadable/oversized body, unknown JSON property, over-long `Idempotency-Key` |
+| 404 | `NOT_FOUND` | unknown route (distinct from `PURCHASE_NOT_FOUND`, a known route + absent id) |
+| 405 | `METHOD_NOT_ALLOWED` | unmapped verb — how **append-only** (D-09) surfaces: no `PUT`/`PATCH`/`DELETE` |
+| 406 | `NOT_ACCEPTABLE` | `Accept` cannot be satisfied |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | request `Content-Type` not JSON |
+
+The last five are **protocol-level**: the framework rejects the request before any handler runs, and
+the advice enriches that problem with the same `code` + `traceId` shape so the wire body is uniform.
 
 **Status discipline:** `400` = malformed/can't-process-as-written; **`422` = well-formed but the
 request can't be fulfilled** (no rate, unsupported currency). Keep this distinction crisp.
@@ -108,9 +116,15 @@ key. Insert is atomic with the purchase (`data-model.md`).
 
 ## Caching
 
-Past-dated conversions are near-deterministic ⇒ `Cache-Control: public, max-age=…` + `ETag` /
+Past-dated conversions are near-deterministic ⇒ `Cache-Control: …max-age=…` + `ETag` /
 `If-None-Match`. **Not `immutable`** — recent quarters can gain an amendment (F8) and the mapping can
 drift; use a **moderate** TTL. Purchases carry an `ETag` too.
+
+> **Deviation — `private`, not `public`.** Both response bodies embed the purchase `description`, which
+> is PII (constitution §5/§9). A `public` directive would license shared/CDN caches to retain it, so the
+> implementation ships `Cache-Control: private` on both reads (`max-age=60` for the purchase, `3600` for
+> the conversion). Revalidation still rides the `ETag`; only the *shared-cacheability* is given up. If
+> `description` is ever dropped from these bodies, `public` becomes safe again.
 
 ## Security  *(constitution §5)*
 
