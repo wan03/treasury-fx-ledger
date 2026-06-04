@@ -6,6 +6,18 @@
 //   (mutation on the money + rate-selection packages), ArchUnit (boundaries).
 // Pinned non-BOM versions are verified against the live build.
 // =============================================================================
+
+// Flyway 10+ split per-vendor support into separate modules, and the Flyway
+// GRADLE plugin resolves them from the BUILDSCRIPT classpath — having
+// flyway-database-postgresql on the app's runtime classpath (below) is not
+// enough for `make db-migrate` (flywayMigrate), which would otherwise fail with
+// "No Flyway database plugin found to handle jdbc:postgresql://…". Pin to the
+// plugin's version (11.7.2) so the handler matches flyway-core exactly.
+buildscript {
+    repositories { mavenCentral() }
+    dependencies { classpath("org.flywaydb:flyway-database-postgresql:11.7.2") }
+}
+
 plugins {
     java
     id("org.springframework.boot") version "3.5.14"

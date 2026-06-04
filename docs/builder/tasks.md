@@ -198,14 +198,32 @@ Phase-7-owned items. **Assumptions compiled for the submission** (surfaced in th
 
 ## Phase 7 — Submission polish
 
-- [ ] **T7.1** README: quickstart (JDK + Docker → `make dev`), the architecture sketch, **the explicit
-      assumptions** (effective_date vs record_date, reject-vs-round, future dates, USD identity, union
-      primaries, 2-dp caveat), and the HM open-questions list.
-- [ ] **T7.2** Makefile targets `dev / test / integration / build / db-migrate / clean` all work.
-- [ ] **T7.3** Final pass: no secrets committed; logs clean of PII; licenses/attribution; tag the repo.
-- [ ] **T7.4** **Deploy to Render + Neon (D-12):** create the Neon DB (two roles), connect the repo via
-      `render.yaml`, set env secrets in Render, verify the **live HTTPS URL** (health + a POST→GET EUR
-      round-trip), and link it in the README. Note the cold-start caveat honestly.
+- [x] **T7.1** README: quickstart (JDK + container runtime → `make dev`), the architecture sketch, the
+      `ExchangeRateProvider` seam, **the explicit assumptions** (effective_date vs record_date,
+      reject-vs-round, future dates, USD identity, provider default, pagination caveat), the HM
+      open-questions list, the testing/gates table, and the deployment walkthrough. *(All in-repo links
+      verified to resolve.)*
+- [x] **T7.2** Makefile targets verified end-to-end: `test` ✓ (green), `integration` ✓ (Testcontainers
+      over the Podman socket, `BUILD SUCCESSFUL`), `build` ✓ (38 MB layered jar), `clean` ✓, `mutation` ✓
+      (PIT 92%), `canary` ✓ (opt-in, non-gating). `dev` boots the app + serves a real **R1→R2 round-trip**
+      against live Postgres + live Treasury (UUIDv7, security headers, RFC 9457 errors, USD identity, live
+      EUR `0.924 → 92.40`) — validated. **Deviation/fix:** `db-migrate` failed (`No Flyway database plugin
+      found to handle jdbc:postgresql`) because the Flyway *Gradle plugin* resolves vendor modules from the
+      **buildscript** classpath; added `flyway-database-postgresql` there → `flywayMigrate` now succeeds.
+      **DX note:** `make dev`'s Spring docker-compose support needs a *Compose CLI* (Docker bundles it; bare
+      rootless Podman needs a compose provider) — documented precisely in the README; the test/integration
+      targets need only the socket.
+- [x] **T7.3** Final pass: secrets sweep clean (only `.env.example` tracked; no real credentials); logs
+      clean of PII (no `amount`/`description`/body in any `log.*`); `.jqwik-database` already git-ignored;
+      attribution captured in the README (Treasury = public domain; submission proprietary-for-evaluation —
+      deliberately **no OSS LICENSE** on a private take-home). Repo tagged after the Phase-7 commit.
+- [~] **T7.4** **Deploy to Render + Neon (D-12):** scaffold *verified* — `render.yaml` Blueprint present,
+      multi-stage `Dockerfile` builds the layered jar, prod profile binds `${PORT:8080}` and reads
+      `DATABASE_*`/`DB_MIGRATION_*` from env, and the `db/init/00-roles.sql` least-privilege bootstrap is
+      proven (the `make dev` boot created `app`+`migration` with `public` owned by `migration`). Exact
+      deploy steps + the free-tier cold-start caveat are documented in the README. **Manual step (flagged):**
+      the live Neon DB + Render deploy + HTTPS-URL verification require the **user's own accounts** and
+      cannot be done autonomously — the live-demo line in the README is a placeholder to fill post-deploy.
 
 ---
 

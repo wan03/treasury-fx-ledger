@@ -117,7 +117,10 @@ D-07 (USD identity), D-03 (resilience).
 - [x] OpenAPI served; errors are RFC 9457; no PII/amounts in logs (verified by a test or review).
       *(springdoc serves the authored `openapi.yaml`; slice tests assert `problem+json`+`code`+`traceId`;
       grep confirms no `description`/`amount` in any `log.*`. CC-4 message-level validation = documented follow-up.)*
-- [ ] One-command local run works from a clean checkout (`make dev`). *(Wiring is exercised by the
-      `@SpringBootTest` context-load + E2E; the full clean-checkout `bootRun`+compose boot is owned by **T7.2/T7.4**.)*
-- [ ] All `PROPOSED`-but-defaulted behaviors are listed in the submission's "assumptions" section.
-      *(Compiled in `tasks.md` Phase 6 gate notes; surfaced in the README by **T7.1**.)*
+- [x] One-command local run works from a clean checkout (`make dev`). *(Validated in **T7.2**: `make dev`
+      boots the app and serves a real R1→R2 round-trip — UUIDv7, security headers, RFC 9457 errors, USD
+      identity, live EUR `0.924 → 92.40` — against live Postgres + live Treasury. `make dev` auto-starts the
+      DB via Spring's docker-compose support, which needs a Compose CLI (Docker bundles it; bare Podman needs
+      a compose provider) — documented in the README; the test/integration targets need only the socket.)*
+- [x] All `PROPOSED`-but-defaulted behaviors are listed in the submission's "assumptions" section.
+      *(Surfaced in the README's **Assumptions** + **Questions I would ask the hiring manager** sections by **T7.1**.)*
