@@ -1,0 +1,32 @@
+name: keep-warm
+
+# Pings the Render free-tier health endpoint so the instance stays warm during
+# business hours and we avoid the ~1-min cold start. See render.yaml (plan: free,
+# spins down after 15 min idle).
+on:
+  schedule:
+    # NOTE: GitHub cron is UTC. 13:00-23:00 UTC on weekdays ~ 06:00-16:00
+    # America/Los_Angeles (Render's region is oregon). Adjust the hour range to
+    # taste. Every 10 min keeps us under Render's 15-min idle spin-down.
+    - cron: "*/10 13-23 * * 1-5"
+  workflow_dispatch: # manual "Run workflow" button for testing
+
+permissions: {} # no repo access needed — we only make an outbound request
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /actuator/health
+        env:
+          # Overridable via a repo Actions variable without editing this file.
+          URL: ${{ vars.KEEP_WARM_URL || 'https://currency-ledger.onrender.com' }}
+        run: |
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-all-errors --retry-delay 10 \
+            --max-time 150 \
+            "$URL/actuator/health"
