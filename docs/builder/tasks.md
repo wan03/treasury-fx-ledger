@@ -84,24 +84,37 @@ also fences the **application** layer as framework-free (no Spring/Jackson; tx b
 > **All four providers, config-selectable behind the port (D-03); default = A.** Implement in order
 > **A0 → A → B → C** — the system is fully functional after A; B/C are additive (don't let them block).
 
-- [ ] **T4.1** Shared HTTP **fetcher** (`RestClient`) issuing the F7 push-down query; tolerant DTO +
-      string→BigDecimal parsing. *(rate-selection.md, plan.md)*
-- [ ] **T4.2** Provider **A0 passthrough** (bare fetcher) **and A on-demand + cache** (Caffeine
-      **decorator** over the fetcher; key `(currency, quarter)`; quarter-aware TTL; brief negative cache).
+- [x] **T4.1** Shared HTTP **fetcher** (`RestClient`) issuing the F7 push-down query; tolerant DTO +
+      string→BigDecimal parsing. *(rate-selection.md, plan.md)* — `TreasuryRateFetcher` +
+      `TreasuryRatesPayload`; malformed 2xx → `TreasuryContractException`.
+- [x] **T4.2** Provider **A0 passthrough** (bare fetcher) **and A on-demand + cache** (Caffeine
+      **decorator** over the fetcher; quarter-aware TTL; brief negative cache).
       **A is the default** (`fx.rates.provider=ondemand`). *(D-03)*
-- [ ] **T4.3** Resilience around the fetcher: timeouts, bounded retries (5xx/timeout only), circuit
-      breaker, mapped `502/503/504`. *(constitution §7)* → AC-2.8
+      **DEVIATION:** cache key is **`(descriptor, purchaseDate)`**, not the planned `(currency, quarter)`.
+      Two purchase dates in the *same* quarter can resolve to *different* rates under an intra-quarter
+      amendment (F8 / Argentina fixture); a quarter-coarse key would mis-share them. The read pattern
+      (re-converting a stored purchase with a fixed `transactionDate`) keeps the hit rate high anyway.
+- [x] **T4.3** Resilience around the fetcher: timeouts, bounded retries (5xx/timeout only), circuit
+      breaker, mapped `502/503/504`. *(constitution §7)* → AC-2.8 — `ResilientRateFetcher`;
+      `RateProviderUnavailableException{UPSTREAM_ERROR,TIMEOUT,CIRCUIT_OPEN}`. Breaker `minimumNumberOfCalls`
+      set explicitly (≤ window) so it can actually open; timeout classification handles the JDK client's
+      `HttpTimeoutException` (not just `SocketTimeoutException`).
 - [ ] **T4.4** Provider **B ingest** (`provider=ingest`): `exchange_rates` table (data-model.md `V3`);
       a **triggered + scheduled sync** that backfills and **reconciles amendments**; local indexed
       selection query (`= desc AND effective_date <= d ORDER BY effective_date DESC LIMIT 1`). *(D-03, data-model.md)*
 - [ ] **T4.5** Provider **C hybrid** (`provider=hybrid`): local-first over B with **lazy fill on miss** +
       **current-quarter background refresh**. *(D-03)*
-- [ ] **T4.6** Adapter slices vs **WireMock** / Testcontainers: outgoing-query assertion; captured-payload
+- [~] **T4.6** Adapter slices vs **WireMock** / Testcontainers: outgoing-query assertion; captured-payload
       parse; empty `data[]` → no-rate; resilience behaviors; schema tolerance; B sync + amendment
       reconciliation. **Provider-parity test:** all four return the same rate for a fixture date. *(test-strategy.md §2, §4)*
+      — **A-side done** (`TreasuryRateFetcherTest`, `CachingExchangeRateProviderTest`,
+      `TreasuryRateProviderResilienceIT`); B sync + 4-way provider-parity land with 4b.
 
-**Gate:** all four providers selectable and slice-green incl. resilience; **provider-parity test passes**;
-contract test against the captured payload passes. (Shippable after T4.2–T4.3; B/C may land in a later PR.)
+**Gate (4a — A0/A + resilience):** ✅ MET. Default `ondemand` provider boots end-to-end (context-boot IT);
+14 fast adapter unit tests + 4 resilience ITs green; F7 query asserted; empty `data[]` → no-rate;
+schema-tolerance + contract-violation mapping; retries fire on 5xx/timeout only, breaker opens then
+fast-fails, 4xx neither retried nor counted; quarter-aware + negative caching with no exception poisoning.
+**Remaining for 4b:** B ingest, C hybrid, four-way provider-parity test.
 
 ## Phase 5 — Web layer & error contract
 

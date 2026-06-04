@@ -1,6 +1,5 @@
 package com.wex.fx.config;
 
-import com.wex.fx.adapter.treasury.UnavailableExchangeRateProvider;
 import com.wex.fx.application.ConvertPurchaseService;
 import com.wex.fx.application.StorePurchaseService;
 import com.wex.fx.application.port.ExchangeRateProvider;
@@ -12,7 +11,6 @@ import com.wex.fx.domain.currency.CurrencyMap;
 import com.wex.fx.domain.validation.PurchaseValidator;
 import java.time.Clock;
 import java.time.Duration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,16 +33,6 @@ class ApplicationWiring {
     @Bean
     PurchaseValidator purchaseValidator(Clock clock) {
         return PurchaseValidator.withDefaults(clock);
-    }
-
-    /**
-     * Phase-3 fallback rate provider (D-03). {@code @ConditionalOnMissingBean} means the first real
-     * Treasury adapter in Phase 4 transparently replaces it.
-     */
-    @Bean
-    @ConditionalOnMissingBean(ExchangeRateProvider.class)
-    ExchangeRateProvider exchangeRateProvider() {
-        return new UnavailableExchangeRateProvider();
     }
 
     @Bean

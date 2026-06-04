@@ -38,17 +38,38 @@ fx:
   # POST idempotency replay window (data-model.md). After it lapses the swept key may be reused.
   idempotency:
     ttl: 24h
+  # fx.rates.* binds to RatesProperties (@ConfigurationProperties). Every key is optional —
+  # @DefaultValue mirrors the values below — but we spell out the production posture here so the
+  # operational knobs (timeouts, retry/breaker thresholds, cache TTLs) are discoverable, not magic.
   rates:
     # D-03: A0 passthrough | A on-demand+cache (DEFAULT) | B ingest | C hybrid.
     provider: ondemand
+    # D-02 / rate-selection.md: max(effective_date) ≤ purchaseDate within this many calendar months.
+    window-months: 6
     treasury:
       base-url: https://api.fiscaldata.treasury.gov/services/api/fiscal_service
-      connect-timeout: 2s
+      connect-timeout: 2s             # bounded — never an unbounded wait on the dependency
       read-timeout: 5s
-      max-retries: 2
-    window-months: 6
-    clock-zone: UTC
-    date-skew: 0s
+    # Provider-A cache (Caffeine), quarter-aware TTL: settled past quarters are immutable (cache long);
+    # the current still-amendable quarter caches briefly so a late amendment (F8) is picked up; a
+    # "no rate" outcome caches only briefly. Upstream failures are never cached.
+    cache:
+      settled-ttl: 30d
+      current-quarter-ttl: 10m
+      negative-ttl: 1m
+      maximum-size: 10000
+    # Retries are bounded and fire ONLY on transient upstream failures (5xx / timeout / connection),
+    # never on a 4xx or a malformed body; the breaker fails fast once the recent failure rate trips.
+    resilience:
+      max-attempts: 2
+      retry-backoff: 200ms
+      sliding-window-size: 20
+      # Keep <= sliding-window-size; the Resilience4j default (100) would never be reached by a
+      # 20-wide COUNT_BASED window, leaving the breaker permanently closed.
+      minimum-number-of-calls: 10
+      failure-rate-threshold: 50
+      wait-duration-in-open-state: 30s
+      permitted-calls-in-half-open-state: 3
 
 management:
   endpoints:
