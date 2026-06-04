@@ -1,46 +1,87 @@
 # WEX Currency Ledger
 
-A production-grade service that **(R1) stores USD purchase transactions** and **(R2) returns them
-converted** into a target currency using the official **U.S. Treasury _Reporting Rates of Exchange_**
-API. Java 21 · Spring Boot 3.5 · PostgreSQL · hexagonal architecture.
+> A production-grade service that **stores USD purchase transactions** and **returns them converted**
+> into a target currency using the official **U.S. Treasury _Reporting Rates of Exchange_** API.
+> **Java 21 · Spring Boot 3.5 · PostgreSQL · hexagonal architecture.**
 
-> **Live demo:** _<set after deploy — see [Deployment](#deployment)>_ · Swagger UI at `/swagger-ui.html`
->
-> The happy path is trivial. The engineering is in the parts that aren't: **money handling,
-> rate-selection correctness, resilience to the external dependency, security, and the test strategy.**
-> The _why_ behind every decision lives in [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) (ADRs `D-01…D-12`,
-> verified Treasury facts `F1…F9`); the builder docs under [`docs/builder/`](docs/builder) cover the _how_.
+<table>
+<tr>
+<td width="50%">
+
+### ▶ Explore interactively
+**[`docs/explore.html`](docs/explore.html)** — a single self-contained page that lets you switch between
+the **Codebase** and the **Live App**: an interactive architecture map, a browsable decision log, a code
+tour, and a **live rate-selection playground** where you drag a purchase date and watch the Treasury rate
+get chosen. _(Download & open in any browser — no install.)_
+
+</td>
+<td width="50%">
+
+### 🌐 Live demo
+**`_<set after deploy — see [Deployment](#deployment)>_`**
+Swagger UI at `/swagger-ui.html` (dev). Try a `POST /v1/purchases` then
+`GET …/conversions/EUR`.
+
+</td>
+</tr>
+</table>
 
 ---
 
-## What it does
+## At a glance — what was built
 
-| Operation | Endpoint | Notes |
+Two operations over one domain (money) and one external dependency (Treasury). **The happy path is
+trivial; the engineering is in the parts that aren't** — money handling, rate-selection correctness,
+resilience, security, and the test strategy.
+
+| | Capability | Endpoint |
 |---|---|---|
-| **R1 — store a purchase** | `POST /v1/purchases` | description (≤50), date (not future), positive USD amount; server mints a UUIDv7 |
-| Fetch the stored record | `GET /v1/purchases/{id}` | immutable USD record |
-| **R2 — convert it** | `GET /v1/purchases/{id}/conversions/{currencyCode}` | original USD, the Treasury **rate used**, its `effectiveDate`, and the converted amount (2 dp) |
+| **R1** | Store a purchase — description (≤50), date (not future), positive USD amount; server mints a **UUIDv7** | `POST /v1/purchases` |
+| | Read the immutable record back | `GET /v1/purchases/{id}` |
+| **R2** | Convert it — returns the original USD, the **Treasury rate used**, its effective date, and the converted amount (2 dp) | `GET /v1/purchases/{id}/conversions/{code}` |
 
-The selected rate is the one with the **greatest `effective_date` ≤ the purchase date, within the prior
-6 calendar months**. If none exists, the conversion is unfulfillable → `422 NO_RATE_AVAILABLE`.
+**Eight decisions that carry the signal** (each links to the reasoning):
+
+- 💵 **Money is `BigDecimal`, never float** — full precision, rounded **once**, HALF_UP, scale 2; crosses the wire as a **JSON string**. → [§Engineering signal](#the-engineering-signal-where-the-care-went) · [D-04](docs/DECISION_LOG.md)
+- 🎯 **Rates select on `effective_date`, not `record_date`** — so Treasury's **intra-quarter amendments** pick the right rate (the Argentina fixture proves it). → [§Architecture](#architecture) · [D-02](docs/DECISION_LOG.md)
+- 🌍 **`XOF ≠ XAF`** — both read "Cfa Franc" but are different rates; resolved through a curated ISO-4217 map. → [`currency-map.csv`](src/main/resources/currency-map.csv) · [D-01](docs/DECISION_LOG.md)
+- 🚫 **Reject, never mutate the principal** — an amount with >2 dp is a `400`, not a silent round. → [D-05](docs/DECISION_LOG.md)
+- 🔌 **One `ExchangeRateProvider` port, four config-selectable adapters** — acquisition strategy is a flag, not a rewrite. → [§The seam](#the-exchangerateprovider-seam--the-headline-decision-d-03) · [D-03](docs/DECISION_LOG.md)
+- 🛡️ **Resilient by construction** — bounded retries + circuit breaker → `502/503/504`, never a hang or a leaking `500`. → [D-03](docs/DECISION_LOG.md)
+- 🔒 **Security first** — no amounts/PII in URLs or logs; least-privilege DB roles; RFC 9457 errors. → [§Engineering signal](#the-engineering-signal-where-the-care-went) · [D-09/D-10](docs/DECISION_LOG.md)
+- 🧪 **Deterministic tests, real gates** — injected `Clock`, **zero live network in the gate**, no H2; PIT mutation **92%** on the money/rate core. → [§Testing](#testing--quality-gates) · [D-11](docs/DECISION_LOG.md)
+
+---
+
+## 📑 Mini-documentation — jump to what interests you
+
+| If you want to… | Read this section | …or go straight to the source |
+|---|---|---|
+| See it run in 30 seconds | [Quickstart](#quickstart) | [`Makefile`](Makefile) |
+| Understand the shape of the system | [Architecture](#architecture) | [`docs/builder/plan.md`](docs/builder/plan.md) |
+| Judge the money handling | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`Money.java`](src/main/java/com/wex/fx/domain/money/Money.java) |
+| Inspect the **rate-selection rule** (the crux) | [Architecture](#architecture) | [`RateSelector.java`](src/main/java/com/wex/fx/domain/rate/RateSelector.java) · [`rate-selection.md`](docs/builder/rate-selection.md) |
+| Check the currency mapping (`XOF`≠`XAF`) | [At a glance](#at-a-glance--what-was-built) | [`currency-map.csv`](src/main/resources/currency-map.csv) · [`currency-mapping.md`](docs/builder/currency-mapping.md) |
+| Review the HTTP contract + errors | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`openapi.yaml`](src/main/resources/static/openapi.yaml) · [`ApiExceptionHandler.java`](src/main/java/com/wex/fx/adapter/web/ApiExceptionHandler.java) |
+| Evaluate the test strategy | [Testing & quality gates](#testing--quality-gates) | [`test-strategy.md`](docs/builder/test-strategy.md) |
+| See the resilience story | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`ResilientRateFetcher.java`](src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java) |
+| Read **why** any decision was made | — | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) (ADRs `D-01…D-12`, Treasury facts `F1…F9`) |
+| Know what I assumed & would ask | [Assumptions](#assumptions-committed-defaults--overridable-if-the-brief-intends-otherwise) | [`HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md) |
+| Deploy it | [Deployment](#deployment) | [`render.yaml`](render.yaml) · [`Dockerfile`](Dockerfile) |
+
+> **Two lenses on the same work:** this README is the *narrative*; **[`docs/explore.html`](docs/explore.html)**
+> is the *interactive* version (and it links back here). Use whichever suits you.
 
 ---
 
 ## Quickstart
 
-**Prerequisites:** JDK 21 (a toolchain is auto-provisioned by Gradle if missing) and a container
-runtime. The Gradle wrapper is committed; nothing else to install.
+**Prerequisites:** JDK 21 (Gradle auto-provisions a toolchain if missing) and a container runtime.
+The Gradle wrapper is committed; nothing else to install.
 
 ```bash
 make dev        # starts Postgres (docker-compose), applies migrations, runs the app on :8080
 ```
-
-> **Container runtime, precisely:** `make dev` uses Spring Boot's Docker Compose support, which shells
-> out to a **Compose CLI** — **Docker Desktop / `docker compose` bundles it out of the box**. On rootless
-> **Podman**, install a compose provider (`podman compose`, i.e. the `podman-compose`/`docker-compose`
-> backend) so `make dev` can auto-start the DB. The **test/integration** targets are lighter: they need
-> only the container **API socket** (Testcontainers talks to it directly), which a bare rootless Podman
-> already exposes — see [`make podman-up`](#make-targets). _(Verified end-to-end on both paths.)_
 
 Then open **http://localhost:8080/swagger-ui.html**, or drive it from the shell:
 
@@ -49,22 +90,20 @@ Then open **http://localhost:8080/swagger-ui.html**, or drive it from the shell:
 curl -sS -X POST http://localhost:8080/v1/purchases \
   -H 'Content-Type: application/json' \
   -d '{"description":"Office supplies","transactionDate":"2025-04-15","amount":"100.00"}'
-
-# → 201 Created
-# { "id":"0190f3e2-…","description":"Office supplies","transactionDate":"2025-04-15",
-#   "amount":"100.00","currency":"USD","createdAt":"2026-06-04T…Z" }
+# → 201 Created · {"id":"019e93ff-…","amount":"100.00","currency":"USD","createdAt":"…Z", …}
 
 # R2 — convert it to EUR (money & rate are JSON STRINGS)
 curl -sS http://localhost:8080/v1/purchases/<id>/conversions/EUR
-
-# → 200 OK
-# { "purchaseId":"0190f3e2-…","originalAmount":"100.00","originalCurrency":"USD",
-#   "targetCurrency":"EUR","exchangeRate":"0.924","rateEffectiveDate":"2025-03-31",
-#   "convertedAmount":"92.40","rateSource":"U.S. Treasury Reporting Rates of Exchange" }
+# → 200 OK · {"originalAmount":"100.00","exchangeRate":"0.924","rateEffectiveDate":"2025-03-31",
+#             "convertedAmount":"92.40","rateSource":"U.S. Treasury Reporting Rates of Exchange", …}
 ```
 
-> `make dev` is **idempotent and self-contained** — the database container is started and
-> health-checked for you (Spring Boot Docker Compose support), and Flyway runs the migrations on boot.
+> **Container runtime, precisely:** `make dev` uses Spring Boot's Docker Compose support, which shells out
+> to a **Compose CLI** — **Docker Desktop / `docker compose` bundles it out of the box.** On rootless
+> **Podman**, install a compose provider (`podman compose`) so `make dev` can auto-start the DB. The
+> **test/integration** targets are lighter — they need only the container **API socket** (Testcontainers
+> talks to it directly), which a bare rootless Podman already exposes (`make podman-up`). _Verified
+> end-to-end on both paths._
 
 ### Make targets
 
@@ -79,15 +118,13 @@ curl -sS http://localhost:8080/v1/purchases/<id>/conversions/EUR
 | `make db-migrate` | Apply Flyway migrations (env / `.env`) |
 | `make clean` | Remove build outputs |
 
-(Using Podman? `make podman-up` enables the rootless socket once; the test targets point Testcontainers at it.)
-
 ---
 
 ## Architecture
 
-**Hexagonal (ports & adapters).** The domain is small, but the **boundaries are the point**:
-dependencies point inward only, enforced by ArchUnit. The framework-free core (`domain` + `application`)
-has zero Spring/web/JDBC imports, so the business rules are unit-testable without a container.
+**Hexagonal (ports & adapters).** The domain is small, but the **boundaries are the point**: dependencies
+point inward only, enforced by ArchUnit. The framework-free core (`domain` + `application`) has zero
+Spring/web/JDBC imports, so the business rules are unit-testable without a container.
 
 ```
    HTTP ─▶  adapter/web        controllers · RFC 9457 ProblemDetail · DTOs · OpenAPI
@@ -106,6 +143,12 @@ has zero Spring/web/JDBC imports, so the business rules are unit-testable withou
                        treasury/    (ExchangeRateProvider impls + resilience)
 ```
 
+**The crux — rate selection** ([`RateSelector.java`](src/main/java/com/wex/fx/domain/rate/RateSelector.java),
+a pure function): choose the rate with the **greatest `effective_date ≤ purchaseDate`**, within a **6
+calendar-month** window (inclusive, leap-day-aware). No rate in the window ⇒ `422 NO_RATE_AVAILABLE`.
+Selecting on `effective_date` (not `record_date`) is what makes **intra-quarter amendments** correct — the
+[explorer's playground](docs/explore.html) demonstrates this live.
+
 ### The `ExchangeRateProvider` seam — the headline decision (D-03)
 
 One port, **four config-selectable adapters**, chosen by `fx.rates.provider`:
@@ -118,7 +161,7 @@ One port, **four config-selectable adapters**, chosen by `fx.rates.provider`:
 | `hybrid` | C — local-first with lazy fill | best of both | evolution of B at scale |
 
 A0/A share one HTTP fetcher (A is a **cache decorator** over it); B/C share the table. Shipping the port
-seam means the acquisition strategy is a config flag, not a rewrite. _(See [`docs/builder/plan.md`](docs/builder/plan.md).)_
+seam means the acquisition strategy is a config flag, not a rewrite. _(See [`plan.md`](docs/builder/plan.md).)_
 
 ---
 
@@ -126,7 +169,8 @@ seam means the acquisition strategy is a config flag, not a rewrite. _(See [`doc
 
 - **Money is `BigDecimal`, never `float`/`double`.** Full precision throughout; **round once at the end**,
   `HALF_UP`, scale 2. Compared with `compareTo`, never `equals`. Money & rates cross the wire as **JSON
-  strings** so no client re-parses them into a lossy binary float. _(D-04, [`constitution.md`](docs/builder/constitution.md))_
+  strings** so no client re-parses them into a lossy binary float. _(D-04,
+  [`constitution.md`](docs/builder/constitution.md) · [`Money.java`](src/main/java/com/wex/fx/domain/money/Money.java))_
 - **The principal is never mutated.** An amount with >2 dp is **rejected (`400`), not rounded** — the only
   rounding is the derived conversion output. _(D-05)_
 - **Rate selection keys on `effective_date`, not `record_date`.** Treasury issues **intra-quarter
@@ -135,15 +179,17 @@ seam means the acquisition strategy is a config flag, not a rewrite. _(See [`doc
   [`rate-selection.md`](docs/builder/rate-selection.md))_
 - **Currency is ISO-4217 in, resolved through a curated, version-controlled map** to Treasury's
   `country_currency_desc`. `XOF ≠ XAF` (both read "Cfa Franc", different rates). `USD` is an in-app
-  **identity** (rate `1.00`, no upstream call). _(D-01/D-07, F5/F9, [`currency-mapping.md`](docs/builder/currency-mapping.md))_
+  **identity** (rate `1.00`, no upstream call). _(D-01/D-07, F5/F9,
+  [`currency-mapping.md`](docs/builder/currency-mapping.md))_
 - **Resilience:** bounded timeouts, bounded retries (5xx/timeout only — never a 4xx), and a circuit breaker;
   failures map to `502/503/504` with a `Retry-After` on the open circuit — **never a hang, never a `500`
-  leaking internals.** _(D-03)_
+  leaking internals.** _(D-03, [`ResilientRateFetcher.java`](src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java))_
 - **Security:** TLS/HSTS assumed at the edge; **no amounts or PII (the `description`) in URLs or logs** —
   ids + `traceId` only; least-privilege DB roles (a `migration` DDL role separate from the `app` DML role);
   no secrets in the repo. _(D-09/D-10, [`constitution.md`](docs/builder/constitution.md) §5/§9)_
 - **Errors are RFC 9457** `application/problem+json` with a machine `code` + `traceId`; `422` for
-  well-formed-but-unfulfillable, `400` for malformed. _(D-09, [`api-contract.md`](docs/builder/api-contract.md))_
+  well-formed-but-unfulfillable, `400` for malformed. _(D-09,
+  [`ApiExceptionHandler.java`](src/main/java/com/wex/fx/adapter/web/ApiExceptionHandler.java))_
 
 ---
 
@@ -166,9 +212,9 @@ make canary        # the live Treasury probe (opt-in; never gates)
 | **PIT mutation** | ≥ **85** on `domain.*` — assertion _strength_, not just line execution (measured **92%**) |
 | **OpenAPI** | the authored [`openapi.yaml`](src/main/resources/static/openapi.yaml) is the contract source of truth, served via Swagger UI |
 
-Every acceptance criterion in [`docs/builder/spec.md`](docs/builder/spec.md) maps to a concrete test in the
-**R↔test matrix** ([`docs/builder/test-strategy.md`](docs/builder/test-strategy.md)). CI is split:
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the fast gate on every PR;
+Every acceptance criterion in [`spec.md`](docs/builder/spec.md) maps to a concrete test in the **R↔test
+matrix** ([`test-strategy.md`](docs/builder/test-strategy.md)). CI is split:
+[`ci.yml`](.github/workflows/ci.yml) runs the fast gate on every PR;
 [`nightly.yml`](.github/workflows/nightly.yml) runs integration + mutation + the live canary.
 
 ---
@@ -204,7 +250,7 @@ Render free-tier's Postgres deletion).
    (they're `sync: false` — never committed).
 3. Render builds the Dockerfile, Flyway migrates on boot, and the health check at `/actuator/health`
    gates the rollout. Verify a `POST → GET …/conversions/EUR` round-trip against the live HTTPS URL, then
-   paste it into the [Live demo](#wex-currency-ledger) line above.
+   paste it into the [Live demo](#-live-demo) line above.
 
 > **Cold-start caveat (honest):** the free Render instance spins down after ~15 min idle, so the first
 > request after a pause takes ~1 minute while it wakes. This is a free-tier trait, not an app warm-up cost.
@@ -257,11 +303,12 @@ src/main/java/com/wex/fx/
   config/            profiles · Clock · HTTP client · Jackson · OpenAPI
 src/test/            fast unit + @WebMvcTest slices (no network)
 src/integrationTest/ Testcontainers + WireMock: persistence, resilience, E2E, live canary
-docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract, …)
+docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract, …) + explore.html
 ```
 
 | Doc | Read it for |
 |---|---|
+| [`docs/explore.html`](docs/explore.html) | the **interactive** tour (codebase ⟷ live app, rate-selection playground) |
 | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) | the _why_ — every decision (`D-01…D-12`) + verified Treasury facts (`F1…F9`) |
 | [`docs/builder/spec.md`](docs/builder/spec.md) | _what_ to build — acceptance criteria (R1/R2) |
 | [`docs/builder/plan.md`](docs/builder/plan.md) | architecture, the port/adapter seam |

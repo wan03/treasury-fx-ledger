@@ -45,3 +45,8 @@ out/
 
 ### jqwik — property-based test run history (failure replay), regenerated locally ###
 .jqwik-database
+
+### Local-only operator notes — NEVER pushed (private cheat-sheet for me, not the HM) ###
+README.local.md
+*.local.md
+NOTES.local.md
