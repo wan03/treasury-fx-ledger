@@ -8,7 +8,7 @@
    When this page is SERVED BY THE APP, the Live App tab targets the same origin
    automatically — no setup needed. These are only fallbacks for opening the file
    offline (file://), and a nicety for deep-linking source on the repo host. */
-const DEPLOYED_URL = ""; // offline fallback base, e.g. "https://wex-fx-ledger.onrender.com"
+const DEPLOYED_URL = "https://currency-ledger.onrender.com"; // the live service (used as the base when opened offline)
 const REPO_URL     = ""; // e.g. "https://github.com/you/wex-fx-ledger" -> makes the .md links resolve
 
 /* ===================== tiny helpers ===================== */
@@ -236,7 +236,7 @@ var SECTIONS = {
     {id:"trace",        label:"Traceability",      ic:"⤳"}
   ],
   live: [
-    {id:"connect",  label:"Connect",         ic:"⚡"},
+    {id:"connect",  label:"Live service",    ic:"⚡"},
     {id:"api",      label:"API playground",  ic:"⟐"},
     {id:"errors",   label:"Error catalog",   ic:"⚠"},
     {id:"flow",     label:"Example flow",    ic:"➜"}
@@ -691,29 +691,28 @@ RENDER.connect = function(){
   var bu = baseUrl();
   var served = location.protocol==="http:"||location.protocol==="https:";
   var deployedNote = served
-    ? 'This page is <b>served by the app</b>, so the Live App tab targets the <b>same origin</b> '
-      + '(<code>'+escapeHtml(location.origin)+'</code>) automatically — the <b>Send</b> buttons work with no CORS. '
-      + 'You can still point at another instance below.'
-    : 'Opened offline (<code>file://</code>) — defaulting to <code>'+escapeHtml(defaultBase())+'</code>. For same-origin '
-      + 'requests, open the app-served copy at <code>/</code> (run <code>make dev</code>), where the Live App '
-      + 'tab is genuinely same-origin.';
+    ? 'You\'re on the <b>live app</b> at <code>'+escapeHtml(location.origin)+'</code>. The <b>Live App</b> tab talks to it '
+      + '<b>same-origin</b> — nothing to set up, the <b>Send</b> buttons just work.'
+    : 'Opened offline (<code>file://</code>) — requests target the live service at <code>'+escapeHtml(defaultBase())+'</code>. '
+      + 'For the genuine same-origin experience, just open <code>'+escapeHtml(defaultBase())+'</code> in your browser.';
   return crossref("codebase")
-  + '<h2>Connect to the live service</h2>'
-  + '<p class="lead">Point the explorer at a running instance. The base URL is remembered in this browser.</p>'
-  + '<div class="banner '+(served?"info":"warn")+'">'+deployedNote+'</div>'
+  + '<h2>Live service</h2>'
+  + '<p class="lead">Nothing to connect — the explorer targets the running service automatically.</p>'
+  + '<div class="banner info">'+deployedNote+'</div>'
   + '<div class="card">'
-    + '<div class="control"><label>Base URL</label>'
-    + '<div class="ep-row"><input type="text" id="cBase" value="'+escapeHtml(bu)+'" class="grow260">'
-    + '<button class="btn" id="cSave">Save</button>'
-    + '<button class="btn primary" id="cPing">Ping /actuator/health</button></div></div>'
+    + '<button class="btn primary" id="cPing">Check service health</button>'
     + '<div id="cOut" class="mt8"></div>'
   + '</div>'
-  + '<div class="banner warn"><b>CORS &amp; cold start.</b> The <b>curl</b> commands always work. When this page is '
-  + 'served by the app, the <b>Send</b> buttons are same-origin and just work; pointing at a <i>different</i> origin '
-  + 'is a best-effort <code>fetch</code> the browser may block (CORS / this page\'s <code>connect-src \'self\'</code> '
-  + 'CSP) — that\'s expected, copy the curl. On Render\'s free tier the first request after ~15 min idle takes ~1 min '
-  + 'to wake the instance.</div>'
-  + '<p class="muted">Once connected, head to the <a data-goto="api">API playground →</a></p>';
+  + '<p class="muted mt6"><b>Cold start:</b> on the free tier the first request after ~15 min idle takes ~1 min while the '
+  + 'instance wakes — a hosting trait, not an app warm-up cost.</p>'
+  + '<details class="mt8"><summary class="muted">Advanced — point at a different instance</summary>'
+    + '<div class="card mt8"><div class="control"><label>Base URL</label>'
+    + '<div class="ep-row"><input type="text" id="cBase" value="'+escapeHtml(bu)+'" class="grow260">'
+    + '<button class="btn" id="cSave">Save</button></div></div>'
+    + '<p class="muted mt6">Remembered in this browser. Pointing at a <i>different</i> origin is a best-effort '
+    + '<code>fetch</code> the browser may block (CORS / <code>connect-src \'self\'</code> CSP) — copy the curl instead.</p>'
+  + '</details>'
+  + '<p class="muted mt8">Head to the <a data-goto="api">API playground →</a></p>';
 };
 INIT.connect = function(){
   el("cSave").addEventListener("click", function(){
@@ -793,8 +792,8 @@ RENDER.api = function(){
   + '<h2>API playground</h2>'
   + '<p class="lead">Build a request, copy a working <b>curl</b>, or hit <b>Send</b> for a best-effort live call. '
   + 'Every endpoint also shows a <b>real captured response</b>.</p>'
-  + '<div class="faint mb6">Base URL: <code id="apiBase">'+escapeHtml(baseUrl())+'</code> '
-  + '— change it under <a data-goto="connect">Connect</a>.</div>';
+  + '<div class="faint mb6">Targeting <code id="apiBase">'+escapeHtml(baseUrl())+'</code> '
+  + '(automatic) — override under <a data-goto="connect">Live service</a>.</div>';
   ENDPOINTS.forEach(function(ep,i){
     html += '<div class="endpoint'+(i===0?" open":"")+'" id="ep_'+ep.id+'">'
       + '<div class="ep-head" data-toggle="'+ep.id+'">'
@@ -926,7 +925,7 @@ RENDER.flow = function(){
 function crossref(otherCtx){
   if(otherCtx==="live"){
     return '<div class="crossref">◉ <span>You\'re exploring the <b>codebase</b>. Want to poke the running service? '
-      + 'Switch to <a data-ctx="live">Live App</a> — connect a URL and fire real requests.</span></div>';
+      + 'Switch to <a data-ctx="live">Live App</a> — fire real requests at the running service.</span></div>';
   }
   return '<div class="crossref">&lt;/&gt; <span>You\'re in the <b>Live App</b>. Curious how it works inside? '
     + 'Switch to <a data-ctx="codebase">Codebase</a> — architecture, decisions, real source and live playgrounds.</span></div>';
