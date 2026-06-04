@@ -9,18 +9,21 @@
 <td width="50%">
 
 ### ▶ Explore interactively
-**[`docs/explore.html`](docs/explore.html)** — a single self-contained page that lets you switch between
-the **Codebase** and the **Live App**: an interactive architecture map, a browsable decision log, a code
-tour, and a **live rate-selection playground** where you drag a purchase date and watch the Treasury rate
-get chosen. _(Download & open in any browser — no install.)_
+**The app's home page _is_ an interactive explorer** — run `make dev` and open
+**[`http://localhost:8080/`](http://localhost:8080/)**. One self-contained page lets you switch between
+the **Codebase** and the **Live App**: an architecture map, a browsable decision log, a code tour, and a
+**live rate-selection playground** where you drag a purchase date and watch the Treasury rate get chosen.
+Served by the app, its **Live App** tab calls the real API **same-origin** (no CORS).
+_(Source: [`src/main/resources/static/explore.html`](src/main/resources/static/explore.html) — also
+opens standalone in any browser, no install.)_
 
 </td>
 <td width="50%">
 
 ### 🌐 Live demo
 **`_<set after deploy — see [Deployment](#deployment)>_`**
-Swagger UI at `/swagger-ui.html` (dev). Try a `POST /v1/purchases` then
-`GET …/conversions/EUR`.
+The deployed root serves the explorer; its **Live App** tab drives the real API live. Swagger UI at
+`/swagger-ui.html` (dev) and a raw `POST /v1/purchases` → `GET …/conversions/EUR` also work.
 
 </td>
 </tr>
@@ -69,8 +72,10 @@ resilience, security, and the test strategy.
 | Know what I assumed & would ask | [Assumptions](#assumptions-committed-defaults--overridable-if-the-brief-intends-otherwise) | [`HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md) |
 | Deploy it | [Deployment](#deployment) | [`render.yaml`](render.yaml) · [`Dockerfile`](Dockerfile) |
 
-> **Two lenses on the same work:** this README is the *narrative*; **[`docs/explore.html`](docs/explore.html)**
-> is the *interactive* version (and it links back here). Use whichever suits you.
+> **Two lenses on the same work:** this README is the *narrative*; the **app's home page**
+> ([`http://localhost:8080/`](http://localhost:8080/), source
+> [`explore.html`](src/main/resources/static/explore.html)) is the *interactive* version (and it links
+> back here). Use whichever suits you.
 
 ---
 
@@ -83,7 +88,8 @@ The Gradle wrapper is committed; nothing else to install.
 make dev        # starts Postgres (docker-compose), applies migrations, runs the app on :8080
 ```
 
-Then open **http://localhost:8080/swagger-ui.html**, or drive it from the shell:
+Then open **http://localhost:8080/** for the interactive explorer (the recommended way in), or
+**http://localhost:8080/swagger-ui.html** for raw Swagger — or drive it from the shell:
 
 ```bash
 # R1 — store a purchase (UUIDv7 returned in the body + Location header)
@@ -147,7 +153,7 @@ Spring/web/JDBC imports, so the business rules are unit-testable without a conta
 a pure function): choose the rate with the **greatest `effective_date ≤ purchaseDate`**, within a **6
 calendar-month** window (inclusive, leap-day-aware). No rate in the window ⇒ `422 NO_RATE_AVAILABLE`.
 Selecting on `effective_date` (not `record_date`) is what makes **intra-quarter amendments** correct — the
-[explorer's playground](docs/explore.html) demonstrates this live.
+[explorer's playground](src/main/resources/static/explore.html) (the app's home page) demonstrates this live.
 
 ### The `ExchangeRateProvider` seam — the headline decision (D-03)
 
@@ -249,8 +255,9 @@ Render free-tier's Postgres deletion).
    five DB secrets (`DATABASE_*`, `DB_MIGRATION_*`) and `SPRING_PROFILES_ACTIVE=prod` in the dashboard
    (they're `sync: false` — never committed).
 3. Render builds the Dockerfile, Flyway migrates on boot, and the health check at `/actuator/health`
-   gates the rollout. Verify a `POST → GET …/conversions/EUR` round-trip against the live HTTPS URL, then
-   paste it into the [Live demo](#-live-demo) line above.
+   gates the rollout. Open the live root `/` for the explorer (its **Live App** tab auto-targets the
+   deployed origin same-origin), verify a `POST → GET …/conversions/EUR` round-trip, then paste the
+   HTTPS URL into the [Live demo](#-live-demo) line above.
 
 > **Cold-start caveat (honest):** the free Render instance spins down after ~15 min idle, so the first
 > request after a pause takes ~1 minute while it wakes. This is a free-tier trait, not an app warm-up cost.
@@ -301,14 +308,15 @@ src/main/java/com/wex/fx/
   adapter/persistence/  Spring Data JDBC + Money↔NUMERIC converter
   adapter/treasury/  the four ExchangeRateProvider variants + resilience
   config/            profiles · Clock · HTTP client · Jackson · OpenAPI
+  resources/static/  explore.html (the interactive home page, served at /) + openapi.yaml
 src/test/            fast unit + @WebMvcTest slices (no network)
 src/integrationTest/ Testcontainers + WireMock: persistence, resilience, E2E, live canary
-docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract, …) + explore.html
+docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract, …)
 ```
 
 | Doc | Read it for |
 |---|---|
-| [`docs/explore.html`](docs/explore.html) | the **interactive** tour (codebase ⟷ live app, rate-selection playground) |
+| [`/` → `explore.html`](src/main/resources/static/explore.html) | the **interactive** home page (codebase ⟷ live app, rate-selection playground) — served by the app |
 | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) | the _why_ — every decision (`D-01…D-12`) + verified Treasury facts (`F1…F9`) |
 | [`docs/builder/spec.md`](docs/builder/spec.md) | _what_ to build — acceptance criteria (R1/R2) |
 | [`docs/builder/plan.md`](docs/builder/plan.md) | architecture, the port/adapter seam |

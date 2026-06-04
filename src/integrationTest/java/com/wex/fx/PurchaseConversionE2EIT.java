@@ -173,6 +173,27 @@ class PurchaseConversionE2EIT extends AbstractPostgresIT {
         assertThat(body.get("currency").asText()).isEqualTo("USD");
     }
 
+    // --- the interactive explorer is the front door ----------------------------------------------
+
+    @Test
+    void home_servesInteractiveExplorer_sameOrigin_withRelaxedCsp() {
+        // GET / forwards to the self-contained explorer page — the recommended live experience.
+        ResponseEntity<String> home = rest.getForEntity("/", String.class);
+
+        assertThat(home.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(home.getHeaders().getContentType().isCompatibleWith(MediaType.TEXT_HTML)).isTrue();
+        assertThat(home.getBody()).contains("WEX FX Ledger");
+
+        // It is a real HTML page, so it carries the narrowly-relaxed CSP (inline assets + same-origin
+        // fetch) — not the data plane's strict policy, and not the page-less Swagger surface.
+        String csp = home.getHeaders().getFirst("Content-Security-Policy");
+        assertThat(csp).isNotNull();
+        assertThat(csp).contains("script-src 'self' 'unsafe-inline'").contains("connect-src 'self'");
+        // Baseline transport/anti-framing headers are still present (constitution §9).
+        assertThat(home.getHeaders().getFirst("X-Frame-Options")).isEqualTo("DENY");
+        assertThat(home.getHeaders().getFirst("X-Content-Type-Options")).isEqualTo("nosniff");
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private String createPurchase(String description, String amount, String date) throws Exception {

@@ -12,6 +12,7 @@ import org.springframework.core.Ordered;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.filter.ShallowEtagHeaderFilter;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
@@ -50,8 +51,9 @@ class WebConfig implements WebMvcConfigurer {
     /**
      * Baseline security headers on every response (constitution §9). Set unconditionally because they are
      * inert when irrelevant: HSTS is ignored by browsers over plain HTTP, and the anti-framing / sniffing
-     * headers cost nothing on a JSON body. The strict {@code Content-Security-Policy} is applied only to
-     * the {@code /v1} data plane so it cannot break the dev-only Swagger UI, which loads its own assets.
+     * headers cost nothing on a JSON body. The {@code Content-Security-Policy} is tailored per surface (see
+     * the filter): strictest on the {@code /v1} data plane, a narrowly-relaxed policy for the explorer HTML
+     * page, and absent on the dev-only Swagger UI so it can load its own bundled assets.
      */
     @Bean
     FilterRegistrationBean<SecurityHeadersFilter> securityHeadersFilter() {
@@ -75,6 +77,18 @@ class WebConfig implements WebMvcConfigurer {
     }
 
     /**
+     * Makes the interactive explorer the application's front door: a bare {@code GET /} forwards to the
+     * self-contained {@code /explore.html} static page (the recommended way to tour the codebase and
+     * exercise the live API same-origin). A forward — not a redirect — keeps the client URL clean and
+     * serves the page in one round-trip. The data plane stays untouched: every API route lives under
+     * {@code /v1} and is matched by controllers, which take precedence over this view controller.
+     */
+    @Override
+    public void addViewControllers(ViewControllerRegistry registry) {
+        registry.addViewController("/").setViewName("forward:/explore.html");
+    }
+
+    /**
      * Sets the response security headers. Stateless and thread-safe, so a single instance serves every
      * request. Written as a {@link OncePerRequestFilter} (not a {@code WebMvcConfigurer} interceptor) so
      * the headers are present even on responses produced outside the handler chain — e.g. a container-level
@@ -94,11 +108,23 @@ class WebConfig implements WebMvcConfigurer {
             response.setHeader("X-Frame-Options", "DENY");
             // Never leak a URL (which could carry an id) to another origin via the Referer header.
             response.setHeader("Referrer-Policy", "no-referrer");
-            // A locked-down CSP for the JSON data plane: it loads and frames nothing. Kept off the
-            // Swagger UI path so the dev explorer's own scripts/styles still load.
-            if (request.getRequestURI().startsWith("/v1/")) {
+            // Content-Security-Policy is tailored per surface:
+            //   • /v1 data plane — loads and frames nothing, so the strictest possible policy.
+            //   • the explorer page ("/" forwards to it, and "/explore.html" direct) — a real HTML
+            //     document with inline script/style and a same-origin fetch to the API, so it needs a
+            //     policy that permits exactly those and nothing more (no remote origins, no framing).
+            //   • Swagger UI and other paths — no CSP header, so its bundled assets still load in dev.
+            String uri = request.getRequestURI();
+            if (uri.startsWith("/v1/")) {
                 response.setHeader(
                         "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+            } else if (uri.equals("/") || uri.equals("/explore.html")) {
+                response.setHeader(
+                        "Content-Security-Policy",
+                        "default-src 'none'; script-src 'self' 'unsafe-inline'; "
+                                + "style-src 'self' 'unsafe-inline'; connect-src 'self'; "
+                                + "img-src 'self' data:; base-uri 'none'; form-action 'none'; "
+                                + "frame-ancestors 'none'");
             }
             chain.doFilter(request, response);
         }

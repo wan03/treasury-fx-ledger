@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>WEX FX Ledger — Interactive Explorer</title>
 <meta name="description" content="Interactive explorer for the WEX USD purchase ledger + Treasury currency-conversion service. Switch between the Codebase and the Live App." />
+<link rel="icon" href="data:," /><!-- empty icon: suppresses the favicon request under a strict default-src 'none' CSP -->
 <style>
   :root{
     --bg:#0d1117; --bg-elev:#161b22; --bg-elev2:#1c2230; --border:#30363d;
@@ -214,7 +215,7 @@
     <button data-ctx="live" role="tab"><span class="ic">◉</span> Live&nbsp;App</button>
   </div>
   <div class="spacer"></div>
-  <a class="readme-link" href="../README.md">↩ Back to README</a>
+  <a class="readme-link" href="../README.md" data-doc="README.md">↩ README</a>
 </header>
 
 <div class="layout">
@@ -227,7 +228,7 @@
 
 <footer class="footer">
   WEX USD purchase ledger &amp; Treasury currency conversion — single-file interactive explorer.
-  Companion to <a href="../README.md">README.md</a> and <a href="DECISION_LOG.md">DECISION_LOG.md</a>.
+  Companion to <a href="../README.md" data-doc="README.md">README.md</a> and <a href="DECISION_LOG.md" data-doc="docs/DECISION_LOG.md">DECISION_LOG.md</a>.
   No tracking, no external requests except the optional live API calls you trigger.
 </footer>
 
@@ -240,8 +241,12 @@
    and LIVE APP (connect + API playground against the deployed service).
    ========================================================================== */
 
-/* ----- set this after deploying (README.local.md step) ----- */
-const DEPLOYED_URL = ""; // e.g. "https://wex-fx-ledger.onrender.com"
+/* ----- optional overrides (both work empty) -----
+   When this page is SERVED BY THE APP, the Live App tab targets the same origin
+   automatically — no setup needed. These are only fallbacks for opening the file
+   offline (file://), and a nicety for deep-linking source on the repo host. */
+const DEPLOYED_URL = ""; // offline fallback base, e.g. "https://wex-fx-ledger.onrender.com"
+const REPO_URL     = ""; // e.g. "https://github.com/you/wex-fx-ledger" -> makes the .md links resolve
 
 /* ===================== tiny helpers ===================== */
 function el(id){return document.getElementById(id);}
@@ -574,7 +579,7 @@ RENDER.seam = function(){
   + '<h3>Why a port at all?</h3>'
   + '<p>One of the seven open questions for the hiring manager is the rate-acquisition strategy (on-demand vs. '
   + 'pre-ingested). Rather than guess, the design makes the answer <b>cheap to change</b>: the domain selection '
-  + 'logic is identical across all four adapters. See <a href="DECISION_LOG.md">D-03</a>.</p>';
+  + 'logic is identical across all four adapters. See <a href="DECISION_LOG.md" data-doc="docs/DECISION_LOG.md">D-03</a>.</p>';
   function row(flag,cls,strat,when){
     return '<tr><td><code>'+flag+'</code></td><td><b>'+cls+'</b></td><td>'+strat+'</td><td class="muted">'+when+'</td></tr>';
   }
@@ -603,7 +608,7 @@ RENDER.decisions = function(){
   var html = crossref("live")
   + '<h2>Decision log</h2>'
   + '<p class="lead">The <i>why</i> behind every rule — 12 ADRs and the verified Treasury facts that drove them. '
-  + 'Full text in <a href="DECISION_LOG.md">DECISION_LOG.md</a>. <span class="muted">Click any card to expand.</span></p>'
+  + 'Full text in <a href="DECISION_LOG.md" data-doc="docs/DECISION_LOG.md">DECISION_LOG.md</a>. <span class="muted">Click any card to expand.</span></p>'
   + '<div class="dl-filter" id="dlFilter">'
     + '<button data-f="all" class="active">All</button>'
     + '<button data-f="decision">Decisions</button>'
@@ -846,25 +851,58 @@ RENDER.trace = function(){
     + tr("AC-2.6","XOF ≠ XAF; malformed ⇒ 400","CurrencyMapTest, TreasuryLiveCanaryIT")
     + tr("AC-2.8","Resilience ⇒ 502/503/504, no hang","ResilientRateFetcherTest")
   + '</tbody></table>'
-  + '<p class="muted">Full matrix in <a href="builder/test-strategy.md">test-strategy.md</a> · acceptance criteria in '
-  + '<a href="builder/spec.md">spec.md</a>.</p>';
+  + '<p class="muted">Full matrix in <a href="builder/test-strategy.md" data-doc="docs/builder/test-strategy.md">test-strategy.md</a> · acceptance criteria in '
+  + '<a href="builder/spec.md" data-doc="docs/builder/spec.md">spec.md</a>.</p>';
   function tr(a,b,c){return '<tr><td><span class="pill">'+a+'</span></td><td>'+b+'</td><td><code>'+c+'</code></td></tr>';}
 };
 
 /* ============================ LIVE APP ============================ */
+function defaultBase(){
+  // Served by the app over http(s) -> same origin, so the Live App tab is genuinely
+  // same-origin (no CORS, and allowed by this page's connect-src 'self' CSP).
+  if(location.protocol==="http:"||location.protocol==="https:") return location.origin;
+  // Opened offline (file://) -> the configured fallback, else local dev.
+  return DEPLOYED_URL || "http://localhost:8080";
+}
 function baseUrl(){
-  return (localStorage.getItem("fx_base_url") || DEPLOYED_URL || "http://localhost:8080").replace(/\/+$/,"");
+  return (localStorage.getItem("fx_base_url") || defaultBase()).replace(/\/+$/,"");
+}
+/* Make the .md doc links resolve in every context. `data-doc` holds the repo-root-relative path
+   (e.g. "docs/DECISION_LOG.md"); this file lives at src/main/resources/static/, so the repo root is
+   four directories up. Rewrite to the repo host when REPO_URL is set; point at the on-disk file when
+   opened offline (file://); and when served by the app (where the markdown isn't a static route)
+   degrade to a hint instead of a dead 404. */
+var REPO_ROOT_FROM_HERE = "../../../../"; // src/main/resources/static/ -> repo root
+function wireDocLinks(){
+  var served = location.protocol==="http:"||location.protocol==="https:";
+  Array.prototype.forEach.call(document.querySelectorAll('a[data-doc]'), function(a){
+    if(a._docWired) return; a._docWired = true;
+    var path = a.getAttribute("data-doc");
+    if(REPO_URL){
+      a.setAttribute("href", REPO_URL.replace(/\/+$/,"")+"/blob/main/"+path);
+      a.setAttribute("target","_blank"); a.setAttribute("rel","noopener");
+    } else if(served){
+      a.setAttribute("href","#"); a.setAttribute("title", path+" — in the repository");
+      a.addEventListener("click", function(e){ e.preventDefault(); toast("See "+path+" in the repository"); });
+    } else {
+      a.setAttribute("href", REPO_ROOT_FROM_HERE + path); // file:// -> resolve up to the repo root
+    }
+  });
 }
 RENDER.connect = function(){
   var bu = baseUrl();
-  var deployedNote = DEPLOYED_URL
-    ? 'Default points at the deployed service.'
-    : 'No deployed URL is baked in yet — defaulting to <code>localhost:8080</code>. After deploy, set <code>DEPLOYED_URL</code> near the top of this file\'s &lt;script&gt; (see README.local.md).';
+  var served = location.protocol==="http:"||location.protocol==="https:";
+  var deployedNote = served
+    ? 'This page is <b>served by the app</b>, so the Live App tab targets the <b>same origin</b> '
+      + '(<code>'+escapeHtml(location.origin)+'</code>) automatically — the <b>Send</b> buttons work with no CORS. '
+      + 'You can still point at another instance below.'
+    : 'Opened offline (<code>file://</code>) — defaulting to <code>'+escapeHtml(defaultBase())+'</code>. The best '
+      + 'experience is to open the app-served copy at <code>/</code> (run <code>make dev</code>), where the Live App '
+      + 'tab is genuinely same-origin.';
   return crossref("codebase")
   + '<h2>Connect to the live service</h2>'
-  + '<p class="lead">Point the explorer at a running instance — the deployed URL or your local <code>make dev</code>. '
-  + 'The base URL is remembered in this browser.</p>'
-  + '<div class="banner '+(DEPLOYED_URL?"info":"warn")+'">'+deployedNote+'</div>'
+  + '<p class="lead">Point the explorer at a running instance. The base URL is remembered in this browser.</p>'
+  + '<div class="banner '+(served?"info":"warn")+'">'+deployedNote+'</div>'
   + '<div class="card">'
     + '<div class="control"><label>Base URL</label>'
     + '<div class="ep-row"><input type="text" id="cBase" value="'+escapeHtml(bu)+'" style="flex:1;min-width:260px">'
@@ -872,10 +910,11 @@ RENDER.connect = function(){
     + '<button class="btn primary" id="cPing">Ping /actuator/health</button></div></div>'
     + '<div id="cOut" style="margin-top:8px"></div>'
   + '</div>'
-  + '<div class="banner warn"><b>CORS &amp; cold start.</b> The <b>curl</b> commands always work. The in-page '
-  + '<b>Send</b> buttons do a best-effort <code>fetch</code> — they succeed same-origin or where CORS permits, and '
-  + 'may be blocked by the browser otherwise (that\'s expected; copy the curl). On Render\'s free tier the first '
-  + 'request after ~15 min idle takes ~1 min to wake the instance.</div>'
+  + '<div class="banner warn"><b>CORS &amp; cold start.</b> The <b>curl</b> commands always work. When this page is '
+  + 'served by the app, the <b>Send</b> buttons are same-origin and just work; pointing at a <i>different</i> origin '
+  + 'is a best-effort <code>fetch</code> the browser may block (CORS / this page\'s <code>connect-src \'self\'</code> '
+  + 'CSP) — that\'s expected, copy the curl. On Render\'s free tier the first request after ~15 min idle takes ~1 min '
+  + 'to wake the instance.</div>'
   + '<p class="muted">Once connected, head to the <a data-goto="api">API playground →</a></p>';
 };
 INIT.connect = function(){
@@ -1145,6 +1184,7 @@ function renderSection(){
   el("main").innerHTML = fn ? fn() : '<h2>Not found</h2>';
   if(INIT[state.id]) INIT[state.id]();
   wireCopy();
+  wireDocLinks();
 }
 function syncHash(){ history.replaceState(null,"","#"+state.ctx+"/"+state.id); }
 
