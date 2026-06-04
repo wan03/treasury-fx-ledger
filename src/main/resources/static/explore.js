@@ -256,6 +256,12 @@ RENDER.overview = function(){
   + '<b>store a USD purchase</b> (R1) and <b>read it back converted</b> into a target currency '
   + 'using official U.S. Treasury <i>Reporting Rates of Exchange</i> (R2). The happy path is trivial; '
   + 'the engineering signal is in money handling, rate-selection correctness, resilience, security and tests.</p>'
+  + '<div class="banner start"><b>Reviewer? The 30-second route:</b> '
+    + '<a data-goto="playground">1 · Rate playground</a> — drag the purchase date, watch the right Treasury rate '
+    + 'get picked (the intra-quarter amendment case). '
+    + '<a data-goto="money">2 · Money calculator</a> — the round-once, no-float arithmetic. '
+    + '<a data-goto="tour">3 · Code tour</a> — the five files that carry the signal, each linked to its source. '
+    + 'Rather run it? <a data-ctx="live">Live App →</a> fires real requests at the service.</div>'
   + '<div class="grid3 mt18">'
     + kpi("blue","2","operations — R1 store, R2 convert")
     + kpi("green","92%","PIT mutation score on the money / rate core")
@@ -272,7 +278,7 @@ RENDER.overview = function(){
   + '</tbody></table>'
   + '<h3>What to look at first</h3>'
   + '<div class="grid2">'
-    + navcard("playground","▶ Rate-selection playground","Drag a purchase date and watch the Argentina amendment fixture pick the right rate in real time. The single best signal.")
+    + navcard("playground","▶ Rate-selection playground","Drag a purchase date and watch the Argentina amendment fixture pick the right rate in real time — selection on effective_date, not record_date.")
     + navcard("money","¤ Money calculator","BigInt fixed-point that mirrors Money.java — see the exact HALF_UP, round-once arithmetic with no float.")
     + navcard("decisions","⚖ Decision log","13 ADRs + verified Treasury facts. Every rule traces to a written rationale.")
     + navcard("architecture","▦ Architecture","Hexagonal, ArchUnit-enforced: domain & application import zero framework.")
@@ -307,6 +313,8 @@ RENDER.architecture = function(){
   html += '</div>'
   + '<div class="banner info">↑ outer layers depend on inner; inner layers never depend on outer. '
   + 'The dependency rule is verified by ArchUnit tests, not just convention.</div>'
+  + '<p class="provline">The rule, as an executable test: '
+    + prov("src/test/java/com/wex/fx/domain/architecture/DomainArchitectureTest.java","DomainArchitectureTest")+'</p>'
   + '<h3>The crux, in one line</h3>'
   + codeblock("domain/rate/RateSelector.java — windowFloor + select",
       "max( effectiveDate ) where  floor <= effectiveDate <= purchaseDate ,  floor = purchaseDate.minusMonths(6)", "java", true)
@@ -407,11 +415,11 @@ INIT.decisions = function(){
 
 /* ---------- CODEBASE: Code tour ---------- */
 var TOUR = [
-  ["money","Money.java","money","Money — round once, HALF_UP","The single guardian of the money path. Note the multiply-then-construct: full precision, then exactly one rounding."],
-  ["rate","RateSelector.java","rate","RateSelector — the crown jewel","A pure function: filter to the 6-month window, take the latest effectiveDate, tiebreak by recordDate. No clock, no network."],
-  ["resilience","ResilientRateFetcher.java","resilience","Resilience — retry over breaker","Every upstream failure collapses to one domain signal mapped to 502 / 503 / 504. Never a hang, never a leaked 500."],
-  ["errors","ApiExceptionHandler.java","errors","Errors — RFC 9457","400 for malformed, 422 for well-formed-but-unfulfillable. Logs carry code/traceId only — never an amount or the description."],
-  ["csv","currency-map.csv","csv","Currency map — XOF ≠ XAF","A curated, version-controlled ISO→descriptor map. USD is intentionally absent (in-app identity)."]
+  ["money","Money.java","money","Money — round once, HALF_UP","The single guardian of the money path. Note the multiply-then-construct: full precision, then exactly one rounding.","src/main/java/com/wex/fx/domain/money/Money.java#L42-L66"],
+  ["rate","RateSelector.java","rate","RateSelector — pure rate selection","A pure function: filter to the 6-month window, take the latest effectiveDate, tiebreak by recordDate. No clock, no network.","src/main/java/com/wex/fx/domain/rate/RateSelector.java#L44-L55"],
+  ["resilience","ResilientRateFetcher.java","resilience","Resilience — retry over breaker","Every upstream failure collapses to one domain signal mapped to 502 / 503 / 504. Never a hang, never a leaked 500.","src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java#L20-L34"],
+  ["errors","ApiExceptionHandler.java","errors","Errors — RFC 9457","400 for malformed, 422 for well-formed-but-unfulfillable. Logs carry code/traceId only — never an amount or the description.","src/main/java/com/wex/fx/adapter/web/ApiExceptionHandler.java"],
+  ["csv","currency-map.csv","csv","Currency map — XOF ≠ XAF","A curated, version-controlled ISO→descriptor map. USD is intentionally absent (in-app identity).","src/main/resources/currency-map.csv#L19-L20"]
 ];
 RENDER.tour = function(){
   var html = crossref("live")
@@ -429,8 +437,10 @@ function renderTour(i){
   el("tourBody").innerHTML =
     '<h3 class="mt18">'+T[3]+'</h3>'
     + '<p class="muted">'+T[4]+'</p>'
-    + codeblock(T[1], SNIP[T[2]], T[2]==="csv"?"csv":"java");
+    + codeblock(T[1], SNIP[T[2]], T[2]==="csv"?"csv":"java")
+    + '<p class="provline">This is an excerpt — read the whole file: '+prov(T[5])+'</p>';
   wireCopy();
+  wireDocLinks();
 }
 INIT.tour = function(){
   renderTour(0);
@@ -466,6 +476,10 @@ RENDER.playground = function(){
     + '</div>'
     + '<div class="faint fs82">Currency pair: <b>USD → ARS</b> · fixture is fixed; everything else is yours to change.</div>'
   + '</div>'
+  + '<p class="provline">The Java this mirrors (source of truth): '
+    + prov("src/main/java/com/wex/fx/domain/rate/RateSelector.java#L44-L55","RateSelector.select(…)")
+    + ' · its tests: '
+    + prov("src/test/java/com/wex/fx/domain/rate/RateSelectorTest.java","RateSelectorTest")+'</p>'
   + '<div id="pgOut"></div>';
 };
 INIT.playground = function(){
@@ -529,8 +543,9 @@ INIT.playground = function(){
 RENDER.money = function(){
   return crossref("live")
   + '<h2>Money calculator</h2>'
-  + '<p class="lead">A fixed-point engine that mirrors <code>Money.java</code> exactly: scaled <code>BigInt</code> '
-  + 'arithmetic — <b>no float anywhere</b> — full-precision multiply, then a <b>single</b> HALF_UP rounding to scale 2.</p>'
+  + '<p class="lead">A teaching aid that mirrors <code>Money.java</code> — <b>the Java is the source of truth</b>; '
+  + 'this is a fixed-point JS re-implementation for the browser: scaled <code>BigInt</code> arithmetic '
+  + '(<b>no float anywhere</b>), full-precision multiply, then a <b>single</b> HALF_UP rounding to scale 2.</p>'
   + '<div class="card">'
     + '<div class="ep-row">'
       + '<div class="control"><label>Original amount (USD, ≤2dp)</label><input type="text" id="mAmt" value="100.00" class="w150"></div>'
@@ -541,7 +556,13 @@ RENDER.money = function(){
   + '</div>'
   + '<div id="mOut"></div>'
   + '<h3>The Java it mirrors</h3>'
-  + codeblock("domain/money/Money.java", SNIP.money, "java");
+  + codeblock("domain/money/Money.java", SNIP.money, "java")
+  + '<p class="provline">Authoritative source: '
+    + prov("src/main/java/com/wex/fx/domain/money/Money.java#L42-L66","Money.java")
+    + ' · its tests (incl. property-based): '
+    + prov("src/test/java/com/wex/fx/domain/money/MoneyTest.java","MoneyTest")
+    + ' · '
+    + prov("src/test/java/com/wex/fx/domain/money/MoneyPropertiesTest.java","MoneyPropertiesTest")+'</p>';
 };
 INIT.money = function(){
   function run(){
@@ -631,10 +652,12 @@ function defaultBase(){
 function baseUrl(){
   return (localStorage.getItem("fx_base_url") || defaultBase()).replace(/\/+$/,"");
 }
-/* Make the .md doc links resolve in every context. `data-doc` holds the repo-root-relative path
-   (e.g. "docs/DECISION_LOG.md"); this file lives at src/main/resources/static/, so the repo root is
-   four directories up. Rewrite to the repo host when REPO_URL is set; point at the on-disk file when
-   opened offline (file://); and when served by the app (where the markdown isn't a static route)
+/* Make the repo links (docs AND source files) resolve in every context. `data-doc` holds a
+   repo-root-relative path, optionally with a GitHub line anchor, e.g. "docs/DECISION_LOG.md" or
+   "src/main/java/com/wex/fx/domain/rate/RateSelector.java#L44-L55". This file lives at
+   src/main/resources/static/, so the repo root is four directories up. Rewrite to the repo host when
+   REPO_URL is set (line anchor preserved → deep-links straight to the code); point at the on-disk file
+   when opened offline (file://); and when served by the app (where the source isn't a static route)
    degrade to a hint instead of a dead 404. */
 var REPO_ROOT_FROM_HERE = "../../../../"; // src/main/resources/static/ -> repo root
 function wireDocLinks(){
@@ -642,16 +665,27 @@ function wireDocLinks(){
   Array.prototype.forEach.call(document.querySelectorAll('a[data-doc]'), function(a){
     if(a._docWired) return; a._docWired = true;
     var path = a.getAttribute("data-doc");
+    var hash = path.indexOf("#");
+    var file = hash>=0 ? path.slice(0,hash) : path;   // path without the #Lxx anchor
+    var frag = hash>=0 ? path.slice(hash) : "";        // "#L44-L55" or ""
     if(REPO_URL){
-      a.setAttribute("href", REPO_URL.replace(/\/+$/,"")+"/blob/main/"+path);
+      a.setAttribute("href", REPO_URL.replace(/\/+$/,"")+"/blob/main/"+file+frag);
       a.setAttribute("target","_blank"); a.setAttribute("rel","noopener");
     } else if(served){
-      a.setAttribute("href","#"); a.setAttribute("title", path+" — in the repository");
-      a.addEventListener("click", function(e){ e.preventDefault(); toast("See "+path+" in the repository"); });
+      a.setAttribute("href","#"); a.setAttribute("title", file+" — in the repository");
+      a.addEventListener("click", function(e){ e.preventDefault(); toast("See "+file+" in the repository"); });
     } else {
-      a.setAttribute("href", REPO_ROOT_FROM_HERE + path); // file:// -> resolve up to the repo root
+      a.setAttribute("href", REPO_ROOT_FROM_HERE + file + frag); // file:// -> resolve up to the repo root
     }
   });
+}
+/* A consistent "provenance" link: from a claim/snippet in the page straight to the file it came from.
+   Uses the data-doc plumbing above, so it deep-links on GitHub (REPO_URL) and still resolves offline. */
+function prov(path, label){
+  var file = path.split("#")[0];
+  var name = label || file.split("/").pop();
+  return '<a class="prov" data-doc="'+escapeHtml(path)+'" title="View '+escapeHtml(file)+' in the repository">'
+    + '<span class="ic">&lt;/&gt;</span> '+escapeHtml(name)+'</a>';
 }
 RENDER.connect = function(){
   var bu = baseUrl();
@@ -660,8 +694,8 @@ RENDER.connect = function(){
     ? 'This page is <b>served by the app</b>, so the Live App tab targets the <b>same origin</b> '
       + '(<code>'+escapeHtml(location.origin)+'</code>) automatically — the <b>Send</b> buttons work with no CORS. '
       + 'You can still point at another instance below.'
-    : 'Opened offline (<code>file://</code>) — defaulting to <code>'+escapeHtml(defaultBase())+'</code>. The best '
-      + 'experience is to open the app-served copy at <code>/</code> (run <code>make dev</code>), where the Live App '
+    : 'Opened offline (<code>file://</code>) — defaulting to <code>'+escapeHtml(defaultBase())+'</code>. For same-origin '
+      + 'requests, open the app-served copy at <code>/</code> (run <code>make dev</code>), where the Live App '
       + 'tab is genuinely same-origin.';
   return crossref("codebase")
   + '<h2>Connect to the live service</h2>'

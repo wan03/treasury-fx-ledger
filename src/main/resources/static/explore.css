@@ -145,6 +145,8 @@
   .banner{border-radius:8px;padding:11px 14px;font-size:.85rem;margin:14px 0;border:1px solid}
   .banner.info{background:rgba(88,166,255,.07);border-color:#1f3a5c;color:#bcd4f0}
   .banner.warn{background:rgba(210,153,34,.07);border-color:#4a3a14;color:#e8cf93}
+  .banner.start{background:rgba(63,185,80,.07);border-color:#1c4527;color:#c7eccf;border-left:3px solid var(--ok)}
+  .banner.start a{font-weight:600;white-space:nowrap}
 
   .endpoint{border:1px solid var(--border);border-radius:10px;margin:16px 0;overflow:hidden}
   .endpoint .ep-head{display:flex;align-items:center;gap:11px;padding:11px 15px;background:var(--bg-elev);cursor:pointer}
@@ -221,3 +223,11 @@
   .c-bad{color:var(--bad)}
   .c-fg{color:var(--fg)}
   .clickable{cursor:pointer}
+
+  /* Provenance: a claim/snippet → the file it came from. */
+  .provline{font-size:.82rem;color:var(--fg-dim);margin:10px 0 0}
+  a.prov{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.8rem;
+    color:var(--accent);background:var(--bg-elev);border:1px solid var(--border);
+    border-radius:6px;padding:2px 8px;white-space:nowrap}
+  a.prov:hover{border-color:var(--accent);text-decoration:none}
+  a.prov .ic{color:var(--fg-faint);font-style:normal}
