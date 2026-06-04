@@ -10,12 +10,12 @@
 
 ### ▶ Explore interactively
 **The app's home page _is_ an interactive explorer** — run `make dev` and open
-**[`http://localhost:8080/`](http://localhost:8080/)**. One self-contained page lets you switch between
+**[`http://localhost:8080/`](http://localhost:8080/)**. One page lets you switch between
 the **Codebase** and the **Live App**: an architecture map, a browsable decision log, a code tour, and a
 **live rate-selection playground** where you drag a purchase date and watch the Treasury rate get chosen.
 Served by the app, its **Live App** tab calls the real API **same-origin** (no CORS).
-_(Source: [`src/main/resources/static/explore.html`](src/main/resources/static/explore.html) — also
-opens standalone in any browser, no install.)_
+_(Source: [`explore.html`](src/main/resources/static/explore.html) + its same-origin siblings
+`explore.css` / `explore.js` — static, no build step; also opens standalone from disk, no install.)_
 
 </td>
 <td width="50%">
@@ -308,7 +308,7 @@ src/main/java/com/wex/fx/
   adapter/persistence/  Spring Data JDBC + Money↔NUMERIC converter
   adapter/treasury/  the four ExchangeRateProvider variants + resilience
   config/            profiles · Clock · HTTP client · Jackson · OpenAPI
-  resources/static/  explore.html (the interactive home page, served at /) + openapi.yaml
+  resources/static/  explore.{html,css,js} + favicon.svg (interactive home page, served at /) + openapi.yaml
 src/test/            fast unit + @WebMvcTest slices (no network)
 src/integrationTest/ Testcontainers + WireMock: persistence, resilience, E2E, live canary
 docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract, …)

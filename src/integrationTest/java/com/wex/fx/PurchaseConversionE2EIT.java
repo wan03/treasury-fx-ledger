@@ -176,22 +176,39 @@ class PurchaseConversionE2EIT extends AbstractPostgresIT {
     // --- the interactive explorer is the front door ----------------------------------------------
 
     @Test
-    void home_servesInteractiveExplorer_sameOrigin_withRelaxedCsp() {
-        // GET / forwards to the self-contained explorer page — the recommended live experience.
+    void home_servesInteractiveExplorer_sameOrigin_withAllSelfCsp() {
+        // GET / forwards to the explorer page — the recommended live experience.
         ResponseEntity<String> home = rest.getForEntity("/", String.class);
 
         assertThat(home.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(home.getHeaders().getContentType().isCompatibleWith(MediaType.TEXT_HTML)).isTrue();
         assertThat(home.getBody()).contains("WEX FX Ledger");
+        // The page pulls its script/style from sibling same-origin files (this is what lets the CSP
+        // drop 'unsafe-inline' — D-13).
+        assertThat(home.getBody()).contains("explore.js").contains("explore.css");
 
-        // It is a real HTML page, so it carries the narrowly-relaxed CSP (inline assets + same-origin
+        // It is a real HTML page, so it carries the all-'self' CSP (same-origin assets + same-origin
         // fetch) — not the data plane's strict policy, and not the page-less Swagger surface.
         String csp = home.getHeaders().getFirst("Content-Security-Policy");
         assertThat(csp).isNotNull();
-        assertThat(csp).contains("script-src 'self' 'unsafe-inline'").contains("connect-src 'self'");
+        assertThat(csp)
+                .contains("script-src 'self'")
+                .contains("style-src 'self'")
+                .contains("connect-src 'self'")
+                .contains("img-src 'self'");
+        // The de-inlining is what makes this real: no inline-execution escape hatch, no data: URIs.
+        assertThat(csp).doesNotContain("unsafe-inline").doesNotContain("data:");
         // Baseline transport/anti-framing headers are still present (constitution §9).
         assertThat(home.getHeaders().getFirst("X-Frame-Options")).isEqualTo("DENY");
         assertThat(home.getHeaders().getFirst("X-Content-Type-Options")).isEqualTo("nosniff");
+
+        // And the de-inlined assets really are served same-origin (so the CSP is satisfiable, not a lie).
+        ResponseEntity<String> js = rest.getForEntity("/explore.js", String.class);
+        assertThat(js.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(js.getBody()).contains("WEX FX Ledger");
+        ResponseEntity<String> css = rest.getForEntity("/explore.css", String.class);
+        assertThat(css.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(css.getBody()).contains(".m0b6");
     }
 
     // --- helpers ---------------------------------------------------------------------------------

@@ -12,9 +12,10 @@ import org.springframework.mock.web.MockHttpServletResponse;
  * Direct unit test for {@link WebConfig.SecurityHeadersFilter} (constitution §9). The filter is the one
  * place that tailors {@code Content-Security-Policy} per surface, so it gets its own focused test rather
  * than only being exercised transitively through a controller slice: the {@code /v1} data plane must get
- * the strictest policy, the explorer HTML page ({@code /} and {@code /explore.html}) a narrowly-relaxed
- * one, and everything else (e.g. Swagger UI) no CSP at all — while the baseline transport/anti-framing
- * headers are present unconditionally on every response.
+ * the strictest policy, the explorer HTML page ({@code /} and {@code /explore.html}) an all-{@code 'self'}
+ * one (no {@code 'unsafe-inline'} — its script/style/icon are sibling same-origin files), and everything
+ * else (e.g. Swagger UI) no CSP at all — while the baseline transport/anti-framing headers are present
+ * unconditionally on every response.
  */
 class SecurityHeadersFilterTest {
 
@@ -52,22 +53,33 @@ class SecurityHeadersFilterTest {
     }
 
     @Test
-    void explorerPage_getsRelaxedCsp_onRootAndOnExplicitPath() throws Exception {
+    void explorerPage_getsAllSelfCsp_onRootAndOnExplicitPath() throws Exception {
         for (String uri : new String[] {"/", "/explore.html"}) {
             String csp = filter(uri).getHeader("Content-Security-Policy");
 
             assertThat(csp).as("CSP present on %s", uri).isNotNull();
-            // A real HTML document: inline script + style, and a same-origin fetch to the API.
+            // A real HTML document, but every asset is same-origin: external script + style + icon,
+            // and a same-origin fetch to the API. Everything is 'self' — nothing more.
             assertThat(csp)
-                    .as("relaxed CSP on %s", uri)
+                    .as("all-self CSP on %s", uri)
                     .contains("default-src 'none'")
-                    .contains("script-src 'self' 'unsafe-inline'")
-                    .contains("style-src 'self' 'unsafe-inline'")
+                    .contains("script-src 'self'")
+                    .contains("style-src 'self'")
                     .contains("connect-src 'self'")
-                    .contains("img-src 'self' data:")
+                    .contains("img-src 'self'")
+                    .contains("base-uri 'none'")
+                    .contains("form-action 'none'")
                     .contains("frame-ancestors 'none'");
-            // Still no remote origins and no framing: relaxed for *this* page, not for the world.
-            assertThat(csp).doesNotContain("http://").doesNotContain("https://").doesNotContain("*");
+            // The whole point of de-inlining (D-13): no inline-execution escape hatch, no data: URIs,
+            // and still no remote origins or framing.
+            assertThat(csp)
+                    .as("no escape hatches on %s", uri)
+                    .doesNotContain("unsafe-inline")
+                    .doesNotContain("unsafe-eval")
+                    .doesNotContain("data:")
+                    .doesNotContain("http://")
+                    .doesNotContain("https://")
+                    .doesNotContain("*");
         }
     }
 

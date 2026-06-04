@@ -52,8 +52,9 @@ class WebConfig implements WebMvcConfigurer {
      * Baseline security headers on every response (constitution §9). Set unconditionally because they are
      * inert when irrelevant: HSTS is ignored by browsers over plain HTTP, and the anti-framing / sniffing
      * headers cost nothing on a JSON body. The {@code Content-Security-Policy} is tailored per surface (see
-     * the filter): strictest on the {@code /v1} data plane, a narrowly-relaxed policy for the explorer HTML
-     * page, and absent on the dev-only Swagger UI so it can load its own bundled assets.
+     * the filter): strictest on the {@code /v1} data plane, an all-{@code 'self'} policy for the explorer
+     * HTML page (its script/style/icon are sibling same-origin files — no {@code 'unsafe-inline'}), and
+     * absent on the dev-only Swagger UI so it can load its own bundled assets.
      */
     @Bean
     FilterRegistrationBean<SecurityHeadersFilter> securityHeadersFilter() {
@@ -111,8 +112,10 @@ class WebConfig implements WebMvcConfigurer {
             // Content-Security-Policy is tailored per surface:
             //   • /v1 data plane — loads and frames nothing, so the strictest possible policy.
             //   • the explorer page ("/" forwards to it, and "/explore.html" direct) — a real HTML
-            //     document with inline script/style and a same-origin fetch to the API, so it needs a
-            //     policy that permits exactly those and nothing more (no remote origins, no framing).
+            //     document whose script, style and icon are all served same-origin from sibling files
+            //     (explore.js / explore.css / favicon.svg). It needs 'self' for exactly those plus a
+            //     same-origin fetch to the API — and nothing more: no 'unsafe-inline', no remote
+            //     origins, no data: URIs, no framing. This is why the page was de-inlined (D-13).
             //   • Swagger UI and other paths — no CSP header, so its bundled assets still load in dev.
             String uri = request.getRequestURI();
             if (uri.startsWith("/v1/")) {
@@ -121,10 +124,9 @@ class WebConfig implements WebMvcConfigurer {
             } else if (uri.equals("/") || uri.equals("/explore.html")) {
                 response.setHeader(
                         "Content-Security-Policy",
-                        "default-src 'none'; script-src 'self' 'unsafe-inline'; "
-                                + "style-src 'self' 'unsafe-inline'; connect-src 'self'; "
-                                + "img-src 'self' data:; base-uri 'none'; form-action 'none'; "
-                                + "frame-ancestors 'none'");
+                        "default-src 'none'; script-src 'self'; style-src 'self'; "
+                                + "connect-src 'self'; img-src 'self'; base-uri 'none'; "
+                                + "form-action 'none'; frame-ancestors 'none'");
             }
             chain.doFilter(request, response);
         }
