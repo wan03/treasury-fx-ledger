@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>WEX FX Ledger — Interactive Explorer</title>
 <meta name="description" content="Interactive explorer for the WEX USD purchase ledger + Treasury currency-conversion service. Switch between the Codebase and the Live App." />
+<meta name="robots" content="noindex,nofollow" /><!-- a deployed demo front door, not a page we want indexed -->
 <link rel="icon" href="data:," /><!-- empty icon: suppresses the favicon request under a strict default-src 'none' CSP -->
 <style>
   :root{
@@ -511,7 +512,7 @@ RENDER.overview = function(){
   + '<div class="grid2">'
     + navcard("playground","▶ Rate-selection playground","Drag a purchase date and watch the Argentina amendment fixture pick the right rate in real time. The single best signal.")
     + navcard("money","¤ Money calculator","BigInt fixed-point that mirrors Money.java — see the exact HALF_UP, round-once arithmetic with no float.")
-    + navcard("decisions","⚖ Decision log","12 ADRs + verified Treasury facts. Every rule traces to a written rationale.")
+    + navcard("decisions","⚖ Decision log","13 ADRs + verified Treasury facts. Every rule traces to a written rationale.")
     + navcard("architecture","▦ Architecture","Hexagonal, ArchUnit-enforced: domain & application import zero framework.")
   + '</div>';
 };
@@ -599,6 +600,7 @@ var DECISIONS = [
   ["D-10","Persistence &amp; local dev","decision","Postgres + Flyway (plain SQL), Spring Data JDBC, Testcontainers (no H2). Least-privilege DB roles: <code>migration</code> (DDL) vs <code>app</code> (DML)."],
   ["D-11","Test strategy","decision","Deterministic: injected <code>Clock</code>, <b>zero real network in the gate</b> (WireMock + Testcontainers), PIT mutation testing on the money / rate core."],
   ["D-12","Deployment","decision","Render (Docker) + Neon (managed Postgres). Flyway migrates on boot; <code>/actuator/health</code> gates rollout."],
+  ["D-13","Explorer as the front door","decision","<code>GET /</code> forwards to this self-contained page so its Live App tab is <b>same-origin (no CORS)</b>. CSP is tailored per surface: strict <code>default-src 'none'</code> on <code>/v1</code>; a minimal bounded relaxation on <code>/</code> + <code>/explore.html</code> (inline assets + <code>connect-src 'self'</code>); none on Swagger. Single-file portability is kept; the API contract is untouched."],
   ["F2","Rate direction","fact","Treasury rates are <b>foreign units per 1 USD</b>, so conversion <b>multiplies</b>. 100 USD × 0.924 = 92.40 EUR."],
   ["F4","effective_date vs record_date","fact","<code>record_date</code> is the quarter the rate was published; <code>effective_date</code> is when it applies. Amendments share a record_date but carry a later effective_date."],
   ["F6","XOF vs XAF","fact","Both labelled \"Cfa Franc\" in Treasury data (BCEAO West-African vs BEAC Central-African) but carry <b>different rates</b>. A naive description match conflates them."],
@@ -607,7 +609,7 @@ var DECISIONS = [
 RENDER.decisions = function(){
   var html = crossref("live")
   + '<h2>Decision log</h2>'
-  + '<p class="lead">The <i>why</i> behind every rule — 12 ADRs and the verified Treasury facts that drove them. '
+  + '<p class="lead">The <i>why</i> behind every rule — 13 ADRs and the verified Treasury facts that drove them. '
   + 'Full text in <a href="DECISION_LOG.md" data-doc="docs/DECISION_LOG.md">DECISION_LOG.md</a>. <span class="muted">Click any card to expand.</span></p>'
   + '<div class="dl-filter" id="dlFilter">'
     + '<button data-f="all" class="active">All</button>'

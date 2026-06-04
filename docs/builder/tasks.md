@@ -5,7 +5,7 @@
 > **Gate discipline:** finish and validate a phase (its tests green, its contract honored) before the
 > next. Walk the spec/plan units before writing code — don't run ahead of them.
 >
-> **Implementation is green-lit** (all D-01..D-12 DECIDED). Build top-down from Phase 0, honoring each gate.
+> **Implementation is green-lit** (all design decisions DECIDED). Build top-down from Phase 0, honoring each gate.
 
 ## Phase 0 — Scaffold & contract-first
 

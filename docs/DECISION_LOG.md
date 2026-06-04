@@ -534,6 +534,64 @@ native image without changing the topology.
 
 ---
 
+### D-13 — Serve the interactive explorer as the app's front door (`/`), with a scoped CSP relaxation  `DECIDED`
+**Context.** The submission ships a single self-contained `explore.html` (inline HTML/CSS/JS, zero
+dependencies, opens offline) that tours the codebase and exercises the live API. To make it the
+*recommended* way in — and to let its **Live App** tab call the API **same-origin (no CORS)** — we serve
+it from the Spring app and forward `GET /` to it. But the app's security posture (constitution §9) sets a
+deliberately strict, JSON-only `Content-Security-Policy` (`default-src 'none'`) that is right for an API
+and **fatal to a real HTML page** — it blocks inline script/style and every `fetch`. Serving an HTML page
+therefore forces a CSP decision on a payments service, where *any* relaxation deserves scrutiny.
+**Options.**
+(a) **Don't serve it from the app** — keep the API origin pure; the explorer stays a local/offline file or
+a separately-hosted static page (GitHub Pages / CDN). Cleanest API; loses the same-origin playground and
+the "open the root and explore" affordance for the reviewer.
+(b) **Serve it; relax the CSP globally** — simplest, **rejected**: it would weaken the `/v1` data plane.
+(c) **Serve it; tailor the CSP per surface** — strict `default-src 'none'` stays on `/v1/**`; a *narrowly*
+relaxed policy applies only to `/` and `/explore.html`. ← **chosen.**
+(d) **Serve it under a nonce/hash CSP** to avoid `'unsafe-inline'`. A **nonce** needs per-response server
+injection into the page → turns the static, offline-openable file into a server-rendered template, losing
+the single-file portability that is the artifact's whole point. A **script hash** is feasible (the page
+uses `addEventListener` only — **no inline `on*` handlers** — so its one `<script>` could be sha256-pinned),
+but it is brittle for a frozen demo file (a later edit silently blanks the page unless a pinning test
+guards it) and does **not** cover the page's inline `style="…"` *attributes* (CSP hashes don't apply to
+style attributes).
+(e) **Split the inline assets into sibling `.js`/`.css`** so `'self'` suffices — removes `'unsafe-inline'`
+for the script and the `<style>` block, but sacrifices the **single self-contained file** (one artifact you
+can email / double-click / open offline), a stated, valued property, and still leaves the inline style
+attributes needing `style-src 'unsafe-inline'`.
+**Decision.** Option (c). `SecurityHeadersFilter` applies CSP per path: `/v1/**` →
+`default-src 'none'; frame-ancestors 'none'` (unchanged); `/` and `/explore.html` →
+`default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+every other path (Swagger) → no CSP. Baseline HSTS / `nosniff` / `X-Frame-Options: DENY` /
+`Referrer-Policy: no-referrer` stay on **every** response. `WebConfig.addViewControllers` forwards
+`/` → `/explore.html`.
+**Rationale.** The relaxation is the **minimum** that makes a real HTML page work and is **confined to two
+exact paths** — the API's security contract is untouched (`/v1` keeps the strictest possible policy; the
+two branches are mutually exclusive). We keep the artifact a **single self-contained file** (its defining,
+offline-portable property) and pay for it with `'unsafe-inline'` rather than splitting assets (e) or
+fragile hash-pinning (d). The residual risk of `'unsafe-inline'` — that injected markup could execute — is
+low **here specifically**: the app has **no authentication, cookies, or session** (auth is assumed
+upstream, D-09), so XSS has nothing to hijack; the only client state is a non-sensitive base-URL string in
+`localStorage`; and **every dynamic / fetched / user-supplied value passes through `escapeHtml` before any
+`innerHTML` write**, so the page exposes no injection sink. `connect-src 'self'` further means the
+playground's `fetch` can only reach the same origin — never an attacker-chosen host.
+**Assumptions.** The deployed instance *is* the demo, so the explorer is served in **all** profiles
+(incl. `prod`) — there is no separate marketing host to gate it to. Reviewer traffic is low/bursty (D-12),
+so serving a static page from the API process is fine. The page stays escape-on-write; if it ever
+interpolates unescaped HTML, this CSP is no longer a safety net.
+**Consequences.** Two tests pin the behavior: `SecurityHeadersFilterTest` asserts the **per-path CSP
+matrix** (strict on `/v1`, relaxed-but-bounded on the page, none on Swagger, baseline headers everywhere)
+and `PurchaseConversionE2EIT#home_servesInteractiveExplorer_…` asserts `GET /` end-to-end (200,
+`text/html`, relaxed CSP). The `/v1` strict-CSP slice assertion is unchanged. A `noindex,nofollow` meta
+keeps the deployed demo out of search.
+**Revisit-if.** This app ever gains **auth / cookies / session**, or serves anything user-generated → drop
+`'unsafe-inline'` immediately (split assets per (e), or hash-pin the script with a guard test) before
+exposure. For a **real production** payments service, serve the explorer from a **separate static host /
+CDN** (or exclude it from the prod image) and keep the API origin pure — the static file ports unchanged.
+
+---
+
 ## 5. Glossary
 
 - **`record_date`** — the quarter-end date a rate is recorded against (base cadence; F3).
@@ -599,3 +657,10 @@ native image without changing the topology.
   Trade-off accepted: 15-min spin-down → ~1-min JVM cold start, mitigable later via keep-warm or a
   GraalVM native image. Phase 0 gains a multi-stage `Dockerfile`, `render.yaml`, and a Neon-backed
   `prod` profile with two least-privilege DB roles.
+- *2026-06 (presentation layer):* **D-13 → DECIDED.** Serve the self-contained interactive explorer as
+  the app's front door (`GET /` → `forward:/explore.html`) so its Live App tab is same-origin (no CORS).
+  Tailor CSP per surface — strict `default-src 'none'` on `/v1`, a minimal bounded relaxation on `/` and
+  `/explore.html` (inline assets + `connect-src 'self'`), none on Swagger; baseline security headers
+  unchanged. Recorded the core trade-off (single-file portability vs `'unsafe-inline'`) and the stricter
+  alternatives weighed (nonce/hash CSP, asset-split, and — for real prod — a separate static host). Pinned
+  by `SecurityHeadersFilterTest` (per-path CSP matrix) and `PurchaseConversionE2EIT` (`GET /` round-trip).

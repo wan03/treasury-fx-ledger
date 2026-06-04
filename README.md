@@ -68,7 +68,7 @@ resilience, security, and the test strategy.
 | Review the HTTP contract + errors | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`openapi.yaml`](src/main/resources/static/openapi.yaml) · [`ApiExceptionHandler.java`](src/main/java/com/wex/fx/adapter/web/ApiExceptionHandler.java) |
 | Evaluate the test strategy | [Testing & quality gates](#testing--quality-gates) | [`test-strategy.md`](docs/builder/test-strategy.md) |
 | See the resilience story | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`ResilientRateFetcher.java`](src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java) |
-| Read **why** any decision was made | — | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) (ADRs `D-01…D-12`, Treasury facts `F1…F9`) |
+| Read **why** any decision was made | — | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) (ADRs `D-01…D-13`, Treasury facts `F1…F9`) |
 | Know what I assumed & would ask | [Assumptions](#assumptions-committed-defaults--overridable-if-the-brief-intends-otherwise) | [`HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md) |
 | Deploy it | [Deployment](#deployment) | [`render.yaml`](render.yaml) · [`Dockerfile`](Dockerfile) |
 
@@ -317,7 +317,7 @@ docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract,
 | Doc | Read it for |
 |---|---|
 | [`/` → `explore.html`](src/main/resources/static/explore.html) | the **interactive** home page (codebase ⟷ live app, rate-selection playground) — served by the app |
-| [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) | the _why_ — every decision (`D-01…D-12`) + verified Treasury facts (`F1…F9`) |
+| [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) | the _why_ — every decision (`D-01…D-13`) + verified Treasury facts (`F1…F9`) |
 | [`docs/builder/spec.md`](docs/builder/spec.md) | _what_ to build — acceptance criteria (R1/R2) |
 | [`docs/builder/plan.md`](docs/builder/plan.md) | architecture, the port/adapter seam |
 | [`docs/builder/rate-selection.md`](docs/builder/rate-selection.md) | the 6-month / effective-date selection rule |
