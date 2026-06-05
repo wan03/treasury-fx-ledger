@@ -158,5 +158,10 @@ class StorePurchaseServiceTest {
             committed = true;
             throw new DuplicateIdempotencyKeyException(key, null);
         }
+
+        @Override
+        public int deleteExpired(Instant now, int batchLimit) {
+            return 0; // not exercised by the race path
+        }
     }
 }

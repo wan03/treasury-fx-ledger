@@ -138,6 +138,25 @@
   .result-box.bad{border-color:#5a2327}
   .bignum{font-size:1.5rem;font-weight:700;font-family:var(--mono)}
 
+  /* ---------- playground feedback animations ----------
+     run() replaces #pgOut's innerHTML wholesale, so these classes sit on freshly
+     created nodes and play once per (re)compute — making "Select rate" (and every
+     input change) visibly DO something, even when the chosen rate is unchanged.
+     CSP-safe: declared here in the 'self' stylesheet, toggled via class names only
+     (no inline styles, no <style> block). Honors prefers-reduced-motion below. */
+  @keyframes flashRing{0%{box-shadow:0 0 0 0 rgba(88,166,255,.55)}100%{box-shadow:0 0 0 16px rgba(88,166,255,0)}}
+  @keyframes flashRingOk{0%{box-shadow:0 0 0 0 rgba(63,185,80,.55)}100%{box-shadow:0 0 0 16px rgba(63,185,80,0)}}
+  @keyframes flashRingBad{0%{box-shadow:0 0 0 0 rgba(248,81,73,.55)}100%{box-shadow:0 0 0 16px rgba(248,81,73,0)}}
+  .flash-ring{animation:flashRing .75s ease-out}
+  .result-box.good.flash-ring{animation-name:flashRingOk}
+  .result-box.bad.flash-ring{animation-name:flashRingBad}
+  @keyframes rowFlash{0%{background:rgba(63,185,80,.32)}100%{background:rgba(63,185,80,0)}}
+  tr.row-flash td{animation:rowFlash 1.1s ease-out}
+  @keyframes popIn{0%{transform:scale(.8);opacity:.35}60%{transform:scale(1.07)}100%{transform:scale(1);opacity:1}}
+  .pop{display:inline-block;animation:popIn .45s cubic-bezier(.2,.7,.3,1.3)}
+  .btn:active{transform:translateY(1px)}
+  @media(prefers-reduced-motion:reduce){.flash-ring,tr.row-flash td,.pop{animation:none}}
+
   .stepbox{font-family:var(--mono);font-size:.82rem;color:var(--fg-dim);background:#0b0f15;border:1px solid var(--border);
     border-radius:8px;padding:12px 14px;margin-top:10px;white-space:pre-wrap;line-height:1.7}
   .stepbox b{color:var(--ok)}

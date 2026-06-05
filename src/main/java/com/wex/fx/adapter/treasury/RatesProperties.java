@@ -57,10 +57,18 @@ public record RatesProperties(
      * <p>{@code minimumNumberOfCalls} must stay {@code <= slidingWindowSize}: Resilience4j's default is
      * 100, but a COUNT_BASED window only ever accumulates {@code slidingWindowSize} measurements, so a
      * default-100 minimum against a 20-wide window would mean the breaker could <em>never</em> open.
+     *
+     * <p>Retry waits use <em>exponential backoff with jitter</em> ({@code retryBackoff} is the initial
+     * interval, grown by {@code retryMultiplier} per attempt, then randomized by ±{@code
+     * retryRandomizationFactor}). The jitter de-synchronizes retry waves so recovering clients don't all
+     * re-hit Treasury on the same tick. With the default {@code maxAttempts=2} this is a single short
+     * backoff in {@code [100ms, 300ms]} — worst-case cumulative wait stays well under a second.
      */
     public record Resilience(
             @DefaultValue("2") int maxAttempts,
             @DefaultValue("200ms") Duration retryBackoff,
+            @DefaultValue("2.0") double retryMultiplier,
+            @DefaultValue("0.5") double retryRandomizationFactor,
             @DefaultValue("20") int slidingWindowSize,
             @DefaultValue("10") int minimumNumberOfCalls,
             @DefaultValue("50") float failureRateThreshold,

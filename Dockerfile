@@ -41,6 +41,13 @@ COPY --from=build /workspace/build/extracted/application/ ./
 USER spring:spring
 EXPOSE 8080
 
+# Container health for local/standalone `docker run` (Render uses its own
+# healthCheckPath, so this is belt-and-braces there). The slim JRE base ships no
+# curl/wget, so we keep it JVM-free — a raw HTTP/1.0 GET over bash's /dev/tcp and a
+# grep for the actuator's "UP" status. No extra packages, no second JVM per probe.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+    CMD ["bash", "-c", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /actuator/health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"status\":\"UP\"' <&3"]
+
 # Container-aware heap sizing; honor Render's $PORT via the app config.
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]

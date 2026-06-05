@@ -4,6 +4,7 @@ import com.wex.fx.domain.rate.ExchangeRate;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import org.springframework.web.client.RestClient;
 
@@ -29,9 +30,13 @@ final class TreasuryRateFetcher implements RateFetcher {
     static final String PATH = "/v1/accounting/od/rates_of_exchange";
     private static final String FIELDS =
             "country_currency_desc,exchange_rate,effective_date,record_date";
-    // Window fetch (ingest/sync) pulls every row in range. Treasury's per-currency history is quarterly
-    // and small, so one generous page covers it; full pagination is a documented future extension.
+    // Window fetch (ingest/sync) pulls every row in range across pages. Treasury's per-currency history is
+    // quarterly and small, so 1000/page is generous; we still follow meta.total-pages so a currency with
+    // >1000 in-window rows is never silently truncated (finding #5).
     private static final int WINDOW_PAGE_SIZE = 1000;
+    // Safety cap on the paging loop: 50 × 1000 = 50k rows is far beyond any real per-currency window, so
+    // hitting it means a runaway response, not legitimate data — stop rather than page forever.
+    private static final int MAX_WINDOW_PAGES = 50;
 
     private final RestClient client;
     // The Treasury column the selection window is filtered/sorted on — follows the configured
@@ -51,13 +56,23 @@ final class TreasuryRateFetcher implements RateFetcher {
     public List<ExchangeRate> fetch(
             String descriptor, LocalDate effectiveOnOrBefore, LocalDate effectiveOnOrAfter) {
         // F7 single-row push-down: the server sorts and returns just the selected row (~1 over the wire).
-        return query(filter(descriptor, effectiveOnOrBefore, effectiveOnOrAfter), 1);
+        // No page[number] — one page of one is the whole answer (the query stays byte-for-byte as before).
+        return mapRows(queryPage(filter(descriptor, effectiveOnOrBefore, effectiveOnOrAfter), 1, null));
     }
 
     @Override
     public List<ExchangeRate> fetchWindow(String descriptor, LocalDate from, LocalDate to) {
-        // Every row in [from, to] (amendments included) so the local store can backfill/reconcile.
-        return query(filter(descriptor, to, from), WINDOW_PAGE_SIZE);
+        // Every row in [from, to] (amendments included) so the local store can backfill/reconcile. Follow
+        // meta.total-pages so a >1000-row window is paged completely, never silently truncated (#5).
+        String filter = filter(descriptor, to, from);
+        List<ExchangeRate> all = new ArrayList<>();
+        int totalPages = 1;
+        for (int page = 1; page <= totalPages && page <= MAX_WINDOW_PAGES; page++) {
+            TreasuryRatesPayload payload = queryPage(filter, WINDOW_PAGE_SIZE, page);
+            all.addAll(mapRows(payload));
+            totalPages = payload == null ? 1 : payload.totalPages();
+        }
+        return all;
     }
 
     private String filter(String descriptor, LocalDate lte, LocalDate gte) {
@@ -66,18 +81,26 @@ final class TreasuryRateFetcher implements RateFetcher {
                 + "," + dateField + ":gte:" + gte;
     }
 
-    private List<ExchangeRate> query(String filter, int pageSize) {
-        TreasuryRatesPayload payload = client.get()
-                .uri(uri -> uri.path(PATH)
-                        .queryParam("fields", FIELDS)
-                        .queryParam("filter", filter)
-                        .queryParam("sort", "-" + dateField)
-                        .queryParam("page[size]", Integer.toString(pageSize))
-                        .queryParam("format", "json")
-                        .build())
+    /** One page. {@code pageNumber == null} omits {@code page[number]} (the single-row {@link #fetch}). */
+    private TreasuryRatesPayload queryPage(String filter, int pageSize, Integer pageNumber) {
+        return client.get()
+                .uri(uri -> {
+                    uri.path(PATH)
+                            .queryParam("fields", FIELDS)
+                            .queryParam("filter", filter)
+                            // Sort on the configured basis so the server push-down matches RateSelector.
+                            .queryParam("sort", "-" + dateField)
+                            .queryParam("page[size]", Integer.toString(pageSize));
+                    if (pageNumber != null) {
+                        uri.queryParam("page[number]", Integer.toString(pageNumber));
+                    }
+                    return uri.queryParam("format", "json").build();
+                })
                 .retrieve()
                 .body(TreasuryRatesPayload.class);
+    }
 
+    private static List<ExchangeRate> mapRows(TreasuryRatesPayload payload) {
         if (payload == null || payload.data() == null || payload.data().isEmpty()) {
             return List.of();   // genuine "no rate in window" — a normal 422, not a failure
         }
