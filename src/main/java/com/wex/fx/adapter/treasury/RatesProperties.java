@@ -1,5 +1,6 @@
 package com.wex.fx.adapter.treasury;
 
+import com.wex.fx.domain.rate.RateDateBasis;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
@@ -14,12 +15,16 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *                     {@code ingest} (B) or {@code hybrid} (C). B/C land in a later slice; until then they
  *                     fall back to the no-rate provider. (D-03)
  * @param windowMonths the rate-selection window, in calendar months (D-02 / rate-selection.md).
+ * @param rateDateBasis which Treasury date governs selection: {@code effective_date} (default, the
+ *                     authoritative reading of D-02/F8) or {@code record_date} (the literal-brief reading).
+ *                     Both agree for every non-amended currency; relaxed binding accepts {@code effective-date}.
  */
 @ConfigurationProperties("fx.rates")
 public record RatesProperties(
         @DefaultValue("ondemand") String provider,
         @DefaultValue Treasury treasury,
         @DefaultValue("6") int windowMonths,
+        @DefaultValue("effective_date") RateDateBasis rateDateBasis,
         @DefaultValue Cache cache,
         @DefaultValue Resilience resilience,
         @DefaultValue Sync sync) {

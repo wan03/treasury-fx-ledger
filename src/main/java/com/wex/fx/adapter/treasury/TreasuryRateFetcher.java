@@ -39,9 +39,17 @@ final class TreasuryRateFetcher implements RateFetcher {
     private static final int MAX_WINDOW_PAGES = 50;
 
     private final RestClient client;
+    // The Treasury column the selection window is filtered/sorted on — follows the configured
+    // RateDateBasis so the server push-down matches the pure RateSelector (D-02).
+    private final String dateField;
 
     TreasuryRateFetcher(RestClient client) {
+        this(client, "effective_date");
+    }
+
+    TreasuryRateFetcher(RestClient client, String dateField) {
         this.client = client;
+        this.dateField = dateField;
     }
 
     @Override
@@ -67,10 +75,10 @@ final class TreasuryRateFetcher implements RateFetcher {
         return all;
     }
 
-    private static String filter(String descriptor, LocalDate lte, LocalDate gte) {
+    private String filter(String descriptor, LocalDate lte, LocalDate gte) {
         return "country_currency_desc:eq:" + descriptor
-                + ",effective_date:lte:" + lte
-                + ",effective_date:gte:" + gte;
+                + "," + dateField + ":lte:" + lte
+                + "," + dateField + ":gte:" + gte;
     }
 
     /** One page. {@code pageNumber == null} omits {@code page[number]} (the single-row {@link #fetch}). */
@@ -80,7 +88,8 @@ final class TreasuryRateFetcher implements RateFetcher {
                     uri.path(PATH)
                             .queryParam("fields", FIELDS)
                             .queryParam("filter", filter)
-                            .queryParam("sort", "-effective_date")
+                            // Sort on the configured basis so the server push-down matches RateSelector.
+                            .queryParam("sort", "-" + dateField)
                             .queryParam("page[size]", Integer.toString(pageSize));
                     if (pageNumber != null) {
                         uri.queryParam("page[number]", Integer.toString(pageNumber));

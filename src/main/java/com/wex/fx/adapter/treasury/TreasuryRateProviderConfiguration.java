@@ -45,7 +45,7 @@ class TreasuryRateProviderConfiguration {
 
     @Bean
     RateSelector rateSelector(RatesProperties props) {
-        return new RateSelector(props.windowMonths());
+        return new RateSelector(props.windowMonths(), props.rateDateBasis());
     }
 
     @Bean
@@ -108,9 +108,10 @@ class TreasuryRateProviderConfiguration {
     @ConditionalOnProperty(name = "fx.rates.provider", havingValue = "passthrough")
     ExchangeRateProvider passthroughExchangeRateProvider(
             RestClient treasuryRestClient, Retry treasuryRetry,
-            CircuitBreaker treasuryCircuitBreaker, RateSelector rateSelector) {
+            CircuitBreaker treasuryCircuitBreaker, RateSelector rateSelector, RatesProperties props) {
         return new PassthroughExchangeRateProvider(
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker), rateSelector);
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                rateSelector);
     }
 
     /** Provider A — on-demand + cache. The default ({@code matchIfMissing}). */
@@ -120,7 +121,8 @@ class TreasuryRateProviderConfiguration {
             RestClient treasuryRestClient, Retry treasuryRetry, CircuitBreaker treasuryCircuitBreaker,
             RateSelector rateSelector, Clock clock, RatesProperties props, Ticker rateCacheTicker) {
         PassthroughExchangeRateProvider a0 = new PassthroughExchangeRateProvider(
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker), rateSelector);
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                rateSelector);
         return new CachingExchangeRateProvider(a0, clock, props.cache(), rateCacheTicker);
     }
 
@@ -136,9 +138,10 @@ class TreasuryRateProviderConfiguration {
     @ConditionalOnProperty(name = "fx.rates.provider", havingValue = "hybrid")
     ExchangeRateProvider hybridExchangeRateProvider(
             ExchangeRateStore store, RestClient treasuryRestClient, Retry treasuryRetry,
-            CircuitBreaker treasuryCircuitBreaker, RateSelector rateSelector) {
+            CircuitBreaker treasuryCircuitBreaker, RateSelector rateSelector, RatesProperties props) {
         return new HybridExchangeRateProvider(store,
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker), rateSelector);
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                rateSelector);
     }
 
     /**
@@ -153,7 +156,7 @@ class TreasuryRateProviderConfiguration {
             RestClient treasuryRestClient, Retry treasuryRetry, CircuitBreaker treasuryCircuitBreaker,
             ExchangeRateStore store, CurrencyMap currencyMap, Clock clock, RatesProperties props) {
         return new RateSyncService(
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker),
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
                 store, currencyMap, clock, props.sync().windowMonths());
     }
 
@@ -165,7 +168,16 @@ class TreasuryRateProviderConfiguration {
     }
 
     private static RateFetcher resilientFetcher(
-            RestClient client, Retry retry, CircuitBreaker circuitBreaker) {
-        return new ResilientRateFetcher(new TreasuryRateFetcher(client), retry, circuitBreaker);
+            RestClient client, Retry retry, CircuitBreaker circuitBreaker, RatesProperties props) {
+        return new ResilientRateFetcher(
+                new TreasuryRateFetcher(client, wireDateField(props)), retry, circuitBreaker);
+    }
+
+    /** Treasury column for the active {@link com.wex.fx.domain.rate.RateDateBasis} (D-02). */
+    private static String wireDateField(RatesProperties props) {
+        return switch (props.rateDateBasis()) {
+            case EFFECTIVE_DATE -> "effective_date";
+            case RECORD_DATE -> "record_date";
+        };
     }
 }

@@ -140,4 +140,51 @@ class RateSelectorTest {
         assertThatThrownBy(() -> new RateSelector(0)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new RateSelector(-1)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    // --- the two RateDateBasis readings: agree off-amendment, diverge across one (D-02) ----------
+
+    @org.junit.jupiter.api.Nested
+    class RateDateBasisReadings {
+
+        private final RateSelector byEffective =
+                new RateSelector(RateSelector.DEFAULT_WINDOW_MONTHS, RateDateBasis.EFFECTIVE_DATE);
+        private final RateSelector byRecord =
+                new RateSelector(RateSelector.DEFAULT_WINDOW_MONTHS, RateDateBasis.RECORD_DATE);
+
+        @Test
+        void the_two_bases_agree_for_a_non_amended_currency() {
+            // No amendments: every row's recordDate == effectiveDate, so both readings must coincide
+            // for every purchase date in the window.
+            List<ExchangeRate> candidates = List.of(
+                    rate("2025-03-31", "0.92"),
+                    rate("2024-12-31", "0.95"));
+
+            for (String purchase : List.of("2025-04-20", "2025-03-31", "2025-01-15")) {
+                LocalDate d = LocalDate.parse(purchase);
+                assertThat(byRecord.select(candidates, d).map(ExchangeRate::exchangeRate))
+                        .isEqualTo(byEffective.select(candidates, d).map(ExchangeRate::exchangeRate));
+            }
+        }
+
+        @Test
+        void the_two_bases_diverge_across_an_intra_quarter_amendment() {
+            // The real Argentina-Peso shape (F4): a Q2 amendment effective 2025-08-31 is *booked* on the
+            // Q2 report (recordDate 2025-06-30), so by record_date it ranks alongside the legitimate
+            // 2025-06-30 base. For a 2025-07-15 purchase the record_date reading therefore grabs the
+            // 2025-08-31 amendment that is NOT YET EFFECTIVE (1345) — the effective_date reading correctly
+            // applies the 2025-06-30 rate (1205). This is exactly the mis-rating D-02 prevents.
+            List<ExchangeRate> candidates = List.of(
+                    rate("2025-03-31", "2025-03-31", "1093.0"),
+                    rate("2025-04-15", "2025-03-31", "1230.0"),
+                    rate("2025-06-30", "2025-06-30", "1205.0"),
+                    rate("2025-08-31", "2025-06-30", "1345.0"));   // amendment booked Q2, effective in Q3
+
+            LocalDate purchase = LocalDate.parse("2025-07-15");
+
+            assertThat(byEffective.select(candidates, purchase))
+                    .map(ExchangeRate::exchangeRate).contains(new BigDecimal("1205.0"));
+            assertThat(byRecord.select(candidates, purchase))
+                    .map(ExchangeRate::exchangeRate).contains(new BigDecimal("1345.0"));
+        }
+    }
 }

@@ -161,9 +161,13 @@ seam means the acquisition strategy is a config flag, not a rewrite. _(See [`pla
   [`constitution.md`](docs/builder/constitution.md) · [`Money.java`](src/main/java/com/wex/fx/domain/money/Money.java))_
 - **The principal is never mutated.** An amount with >2 dp is **rejected (`400`), not rounded** — the only
   rounding is the derived conversion output. _(D-05)_
-- **Rate selection keys on `effective_date`, not `record_date`.** Treasury issues **intra-quarter
-  amendments** as new rows with a later `effective_date` but the same `record_date`; selecting on
-  `record_date` would silently pick the wrong rate. The Argentina fixture locks this. _(D-02, F4/F8,
+- **Rate selection keys on `effective_date`, not `record_date` — and ships _both_ readings.** Treasury's
+  own guidance (F8, source-quoted) says an **intra-quarter amendment** is a new row with a later
+  `effective_date`, valid for the rest of the quarter; selecting on `record_date` silently mis-rates a
+  post-amendment purchase. The two readings are **identical for every non-amended currency** and diverge
+  only across an amendment — so the literal-brief reading is a one-line flip
+  (`fx.rates.rate-date-basis=record_date`), default `effective_date`. A test pins both:
+  agree off-amendment, diverge on the Argentina Q2→Q3 amendment. _(D-02, F4/F8,
   [`rate-selection.md`](docs/builder/rate-selection.md))_
 - **Currency is ISO-4217 in, resolved through a curated, version-controlled map** to Treasury's
   `country_currency_desc`. `XOF ≠ XAF` (both read "Cfa Franc", different rates). `USD` is an in-app
@@ -205,6 +209,20 @@ matrix** ([`test-strategy.md`](docs/builder/test-strategy.md)). CI is split:
 [`ci.yml`](.github/workflows/ci.yml) runs the fast gate on every PR;
 [`nightly.yml`](.github/workflows/nightly.yml) runs integration + mutation + the live canary.
 
+### Requirement → implementation → test (traceability at a glance)
+
+| Brief requirement | Where it lives | Proven by |
+|---|---|---|
+| **R1** store: `description` ≤ 50, valid date, positive USD, unique id | [`PurchaseValidator`](src/main/java/com/wex/fx/domain/validation/PurchaseValidator.java) · [`StorePurchaseService`](src/main/java/com/wex/fx/application/StorePurchaseService.java) | `PurchaseValidatorTest`, `PurchaseControllerTest`, `PurchaseConversionE2EIT` |
+| amount **rounded to cent** (we **reject** >2 dp, never mutate) | [`Money`](src/main/java/com/wex/fx/domain/money/Money.java) (D-05) | `MoneyTest` (jqwik), `PurchaseValidatorTest` |
+| server-assigned **unique id** (UUIDv7) | `IdGenerator` port (D-08) | `StorePurchaseServiceTest`, persistence IT |
+| **R2** convert via Treasury; response carries id, desc, date, USD, **rate used**, converted | [`ConvertPurchaseService`](src/main/java/com/wex/fx/application/ConvertPurchaseService.java) | `ConvertPurchaseServiceTest`, `PurchaseConversionE2EIT` |
+| rate **≤ purchase date, within prior 6 months**, latest wins | [`RateSelector`](src/main/java/com/wex/fx/domain/rate/RateSelector.java) (D-02) | `RateSelectorTest` (both bounds, leap-day, amendment, basis readings) |
+| selection date basis (`effective_date` default / `record_date`) | `RateDateBasis` + push-down [`TreasuryRateFetcher`](src/main/java/com/wex/fx/adapter/treasury/TreasuryRateFetcher.java) | `RateSelectorTest$RateDateBasisReadings`, `TreasuryRateFetcherTest` (asserts outbound query) |
+| **no rate in window → error** "cannot be converted" | `NoRateAvailableException` → **422** | `ConvertPurchaseServiceTest`, web slice |
+| converted amount **rounded to 2 dp** (rate kept full precision) | [`Money`](src/main/java/com/wex/fx/domain/money/Money.java) (D-04) | `MoneyTest`, `ConvertPurchaseServiceTest` |
+| **production-grade** (migrations, resilience, observability, tests) | Flyway · Resilience4j · actuator · split test suites | `make integration` + the gates above |
+
 ---
 
 ## Configuration
@@ -218,6 +236,7 @@ and fill in. Profiles: `dev` (local compose) · `test` · `prod`.
 | `DB_MIGRATION_USERNAME` / `DB_MIGRATION_PASSWORD` | the **`migration`** DDL role (Flyway only) |
 | `FX_RATES_TREASURY_BASE_URL` | Treasury base URL (public, unauthenticated; overridden by WireMock in tests) |
 | `FX_RATES_PROVIDER` | `passthrough` \| `ondemand` (default) \| `ingest` \| `hybrid` |
+| `FX_RATES_RATE_DATE_BASIS` | `effective_date` (default) \| `record_date` — which Treasury date governs selection (D-02) |
 
 All rate tunables (the 6-month window, timeouts, retry/breaker thresholds, cache TTLs) are bound config,
 not magic numbers — see `fx.rates.*` in [`application.yml`](src/main/resources/application.yml).
@@ -229,7 +248,8 @@ not magic numbers — see `fx.rates.*` in [`application.yml`](src/main/resources
 The brief leaves several choices open; each is resolved by a documented default and remains a one-line
 config/flag change if steered otherwise.
 
-1. **`effective_date`, not `record_date`**, governs rate selection — intra-quarter amendments are real. _(D-02)_
+1. **`effective_date`, not `record_date`**, governs rate selection — intra-quarter amendments are real;
+   the literal-brief `record_date` reading is shipped behind `fx.rates.rate-date-basis` (identical except across an amendment). _(D-02)_
 2. **Reject amounts with >2 dp (`400`), never round** the principal; the only rounding is the conversion output. _(D-05)_
 3. **Future-dated purchases are rejected;** too-old ones are stored but fail conversion with `422 NO_RATE_AVAILABLE`. _(D-06)_
 4. **`USD` target is an in-app identity** (rate `1.00`, no Treasury call) and is never in the currency map. _(D-07)_

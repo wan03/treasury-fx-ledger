@@ -33,7 +33,7 @@ class TreasuryRetryConfigTest {
     // backoff it is the direct way to read back the configured wait policy — exactly what we assert.
     @SuppressWarnings("deprecation")
     private static Function<Integer, Long> intervalFunction() {
-        RatesProperties props = new RatesProperties("ondemand", null, 6, null, resilience(), null);
+        RatesProperties props = new RatesProperties("ondemand", null, 6, null, null, resilience(), null);
         Retry retry = new TreasuryRateProviderConfiguration().treasuryRetry(props);
         return retry.getRetryConfig().getIntervalFunction();
     }
