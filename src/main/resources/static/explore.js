@@ -529,7 +529,8 @@ INIT.playground = function(){
       else if(dcmp(r.effectiveDate, floor)<0){status="older than window"; badge='<span class="badge out">excluded — before floor</span>';}
       else if(chosen && r===chosen){status="selected"; badge='<span class="badge chosen">✓ SELECTED</span>';}
       else {status="in window, not latest"; badge='<span class="badge out">in window</span>';}
-      return '<tr><td><code>'+r.effectiveDate+'</code></td><td><code>'+r.recordDate+'</code></td>'
+      var rowCls = (chosen && r===chosen) ? ' class="row-flash"' : '';
+      return '<tr'+rowCls+'><td><code>'+r.effectiveDate+'</code></td><td><code>'+r.recordDate+'</code></td>'
         +'<td><code>'+r.rate+'</code></td><td>'+badge+'</td></tr>';
     }).join("");
     var out =
@@ -541,12 +542,12 @@ INIT.playground = function(){
     if(chosen){
       var conv;
       try{ conv = convertMoney(amt, chosen.rate).result; }catch(e){ conv = "(enter a valid ≤2dp amount)"; }
-      out += '<div class="result-box good"><h4 class="m0b6">Result — 200 OK</h4>'
-        +'<div>Chosen rate (effective '+chosen.effectiveDate+'): <span class="bignum c-ok">'+chosen.rate+'</span></div>'
+      out += '<div class="result-box good flash-ring"><h4 class="m0b6">Result — 200 OK</h4>'
+        +'<div>Chosen rate (effective '+chosen.effectiveDate+'): <span class="bignum c-ok pop">'+chosen.rate+'</span></div>'
         +'<div class="muted mt6">'+escapeHtml(amt)+' USD × '+chosen.rate+' = <b class="c-fg">'+conv+' ARS</b> '
         +'<span class="faint">(round once, HALF_UP, scale 2)</span></div></div>';
     } else {
-      out += '<div class="result-box bad"><h4 class="m0b6">Result — 422 NO_RATE_AVAILABLE</h4>'
+      out += '<div class="result-box bad flash-ring"><h4 class="m0b6">Result — 422 NO_RATE_AVAILABLE</h4>'
         +'<div class="muted">No Treasury rate for USD→ARS within '+win+' months on/before '+pd+' (floor '+floor+'). '
         +'The purchase is stored, but cannot be converted — R2\'s mandated error path.</div></div>';
     }
