@@ -9,7 +9,7 @@
    automatically — no setup needed. These are only fallbacks for opening the file
    offline (file://), and a nicety for deep-linking source on the repo host. */
 const DEPLOYED_URL = "https://currency-ledger.onrender.com"; // the live service (used as the base when opened offline)
-const REPO_URL     = ""; // e.g. "https://github.com/you/wex-fx-ledger" -> makes the .md links resolve
+const REPO_URL     = "https://github.com/wan03/treasury-fx-ledger"; // makes the source/.md links resolve on the live site
 
 /* ===================== tiny helpers ===================== */
 function el(id){return document.getElementById(id);}
@@ -135,6 +135,21 @@ function convertMoney(amountStr, rateStr){
   };
 }
 
+/* ===================== display-only money formatting ===================== */
+// Group the integer part of an ALREADY-COMPUTED decimal string with thousands separators
+// (pure string/regex — no float, no Intl, no re-rounding) and optionally append the ISO code.
+// NEVER feed the result back into convertMoney/parseScaled: these are display strings, and the
+// JSON codeblocks keep the exact ungrouped wire value. `code` is appended verbatim, so pass only a
+// trusted literal (e.g. "USD"); for user-entered codes append an escaped value at the call site.
+function formatMoney(decimalString, code){
+  var s = String(decimalString).trim();
+  var neg = s[0] === "-"; if(neg) s = s.slice(1);
+  var parts = s.split(".");
+  var grouped = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  var out = (neg ? "-" : "") + grouped + (parts.length > 1 ? "." + parts[1] : "");
+  return code ? out + " " + code : out;
+}
+
 /* ===================== real code snippets (verbatim from the repo) ===================== */
 var SNIP = {};
 SNIP.money =
@@ -161,10 +176,10 @@ SNIP.rate =
 "    }\n"+
 "    LocalDate floor = windowFloor(purchaseDate);\n"+
 "    return candidates.stream()\n"+
-"            .filter(r -> !r.effectiveDate().isAfter(purchaseDate))  // effectiveDate <= purchaseDate\n"+
-"            .filter(r -> !r.effectiveDate().isBefore(floor))        // effectiveDate >= floor (inclusive)\n"+
-"            .max(Comparator.comparing(ExchangeRate::effectiveDate)  // latest effectiveDate wins\n"+
-"                    .thenComparing(ExchangeRate::recordDate));      // deterministic tiebreak (F8)\n"+
+"            .filter(r -> !basis.of(r).isAfter(purchaseDate))   // selection date <= purchaseDate\n"+
+"            .filter(r -> !basis.of(r).isBefore(floor))         // selection date >= floor (inclusive)\n"+
+"            .max(Comparator.comparing(basis::of)               // latest selection date wins\n"+
+"                    .thenComparing(basis::tiebreak));          // deterministic tiebreak (F8)\n"+
 "}\n\n"+
 "public LocalDate windowFloor(LocalDate purchaseDate) {\n"+
 "    return purchaseDate.minusMonths(windowMonths);   // calendar months, not 180 days\n"+
@@ -380,7 +395,7 @@ RENDER.seam = function(){
 /* ---------- CODEBASE: Decision log ---------- */
 var DECISIONS = [
   ["D-01","Currency input &amp; mapping","decision","ISO-4217 in, resolved through a curated, version-controlled CSV map to Treasury <code>country_currency_desc</code>. <b>XOF ≠ XAF</b> — both read \"Cfa Franc\" but are different rates."],
-  ["D-02","Rate selection by effective_date","decision","Pick <code>max(effectiveDate) ≤ purchaseDate</code> within 6 calendar months. Treasury issues intra-quarter <b>amendments</b> (new effectiveDate, same recordDate), so selecting on recordDate would be wrong."],
+  ["D-02","Rate selection by effective_date","decision","Pick <code>max(effectiveDate) ≤ purchaseDate</code> within 6 calendar months. Treasury issues intra-quarter <b>amendments</b> (a new, later effectiveDate, recorded later still), so selecting on recordDate can rate a post-amendment purchase wrong. <b>Both readings ship</b> behind <code>fx.rates.rate-date-basis</code> — default <b>effective_date</b> (authoritative); <code>record_date</code> is the literal-brief reading. They agree for every non-amended currency and diverge only across an amendment."],
   ["D-03","Rate acquisition strategy","decision","A single <code>ExchangeRateProvider</code> port with four adapters (passthrough / ondemand / hybrid / ingest). Default is on-demand; strategy is a config flag."],
   ["D-04","Money &amp; rounding","decision","<code>BigDecimal</code> only — never float/double. Compute at full precision, round <b>once</b> at the end, HALF_UP, scale 2. Compare with <code>compareTo</code>."],
   ["D-05","Amount precision","decision","Reject amounts with >2 decimals (<code>400 AMOUNT_PRECISION</code>) — never silently round the principal. The only rounding is the derived conversion output."],
@@ -437,7 +452,7 @@ INIT.decisions = function(){
 /* ---------- CODEBASE: Code tour ---------- */
 var TOUR = [
   ["money","Money.java","money","Money — round once, HALF_UP","The single guardian of the money path. Note the multiply-then-construct: full precision, then exactly one rounding.","src/main/java/com/wex/fx/domain/money/Money.java#L42-L66"],
-  ["rate","RateSelector.java","rate","RateSelector — pure rate selection","A pure function: filter to the 6-month window, take the latest effectiveDate, tiebreak by recordDate. No clock, no network.","src/main/java/com/wex/fx/domain/rate/RateSelector.java#L44-L55"],
+  ["rate","RateSelector.java","rate","RateSelector — pure rate selection","A pure function: filter to the 6-month window, take the latest selection date (effective_date by default, record_date optional via fx.rates.rate-date-basis), tiebreak by the other. No clock, no network.","src/main/java/com/wex/fx/domain/rate/RateSelector.java#L52-L63"],
   ["resilience","ResilientRateFetcher.java","resilience","Resilience — retry over breaker","Every upstream failure collapses to one domain signal mapped to 502 / 503 / 504. Never a hang, never a leaked 500.","src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java#L20-L34"],
   ["errors","ApiExceptionHandler.java","errors","Errors — RFC 9457","400 for malformed, 422 for well-formed-but-unfulfillable. Logs carry code/traceId only — never an amount or the description.","src/main/java/com/wex/fx/adapter/web/ApiExceptionHandler.java"],
   ["csv","currency-map.csv","csv","Currency map — XOF ≠ XAF","A curated, version-controlled ISO→descriptor map. USD is intentionally absent (in-app identity).","src/main/resources/currency-map.csv#L19-L20"]
@@ -474,10 +489,13 @@ INIT.tour = function(){
 };
 
 /* ---------- CODEBASE: Rate playground ---------- */
+// The Argentina-Peso amendment fixture, identical to the test suite (PurchaseConversionE2EIT /
+// TreasuryRateIngestIT): the 2025-04-15 amendment carries a LATER record_date (2025-04-30) than its
+// effective_date, which is exactly what makes the effective_date vs record_date readings diverge.
 var ARS_FIXTURE = [
-  {effectiveDate:"2025-03-31", recordDate:"2025-03-31", rate:"1093"},
-  {effectiveDate:"2025-04-15", recordDate:"2025-04-15", rate:"1230"},
-  {effectiveDate:"2025-06-30", recordDate:"2025-06-30", rate:"1205"}
+  {effectiveDate:"2025-03-31", recordDate:"2025-03-31", rate:"1093.0"},
+  {effectiveDate:"2025-04-15", recordDate:"2025-04-30", rate:"1230.0"}, // intra-quarter amendment, recorded later
+  {effectiveDate:"2025-06-30", recordDate:"2025-06-30", rate:"1205.0"}
 ];
 RENDER.playground = function(){
   return crossref("live")
@@ -486,13 +504,19 @@ RENDER.playground = function(){
   + 'browser. The fixture is the <b>Argentina-Peso amendment</b> case from the test suite. Move the purchase date and '
   + 'watch which rate wins — and why.</p>'
   + '<div class="banner info"><b>Why it matters:</b> Treasury issued the <code>2025-04-15 → 1230</code> row as an '
-  + 'intra-quarter <i>amendment</i> with the same record_date as the quarter base. Selecting on record_date (what most '
-  + 'candidates do) picks the wrong rate. Selecting on <b>effective_date</b> picks 1230. <span class="muted">(D-02, F4)</span></div>'
+  + 'intra-quarter <i>amendment</i>, recorded later (<code>record_date 2025-04-30</code>) than it takes effect. '
+  + 'The service ships <b>both readings</b> (<code>fx.rates.rate-date-basis</code>, default <b>effective_date</b> — the '
+  + 'authoritative one); they agree for every non-amended currency and diverge only across an amendment. Flip the '
+  + '<b>basis</b> below with a purchase date <i>between</i> 2025-04-15 and 2025-04-30 to see the two readings disagree. '
+  + '<span class="muted">(D-02, F4)</span></div>'
   + '<div class="card mt6">'
     + '<div class="ep-row">'
-      + '<div class="control"><label>Purchase date</label><input type="date" id="pgDate" value="2025-05-01"></div>'
-      + '<div class="control"><label>Window (months)</label><input type="number" id="pgWin" value="6" min="1" max="24" class="w90"></div>'
-      + '<div class="control"><label>Amount (USD)</label><input type="text" id="pgAmt" value="100.00" class="w120"></div>'
+      + '<div class="control"><label for="pgDate">Purchase date</label><input type="date" id="pgDate" value="2025-05-01"></div>'
+      + '<div class="control"><label for="pgWin">Window (months)</label><input type="number" id="pgWin" value="6" min="1" max="24" class="w90"></div>'
+      + '<div class="control"><label for="pgAmt">Amount (USD)</label><input type="text" id="pgAmt" value="100.00" class="w120"></div>'
+      + '<div class="control"><label for="pgBasis">Date basis</label>'
+        + '<select id="pgBasis"><option value="effective">effective_date (default)</option>'
+        + '<option value="record">record_date</option></select></div>'
       + '<button class="btn blue" id="pgRun">Select rate</button>'
     + '</div>'
     + '<div class="faint fs82">Currency pair: <b>USD → ARS</b> · fixture is fixed; everything else is yours to change.</div>'
@@ -504,60 +528,85 @@ RENDER.playground = function(){
   + '<div id="pgOut"></div>';
 };
 INIT.playground = function(){
+  // Mirror RateDateBasis: the date the rule measures on, plus the tiebreak (the other date).
+  function primaryOf(r, basis){ return basis==="record" ? r.recordDate : r.effectiveDate; }
+  function tiebreakOf(r, basis){ return basis==="record" ? r.effectiveDate : r.recordDate; }
+  // Pure port of RateSelector.select() for the chosen basis: filter to [floor, pd], take the latest
+  // primary date, tiebreak by the other. Returns the winning fixture row or null (→ 422).
+  function selectRate(basis, pd, floor){
+    var chosen = null;
+    ARS_FIXTURE.forEach(function(r){
+      var p = primaryOf(r, basis);
+      if(dcmp(p, pd)>0 || dcmp(p, floor)<0) return;
+      if(!chosen){ chosen = r; return; }
+      var c = dcmp(p, primaryOf(chosen, basis));
+      if(c>0 || (c===0 && dcmp(tiebreakOf(r,basis), tiebreakOf(chosen,basis))>0)) chosen = r;
+    });
+    return chosen;
+  }
   function run(){
     var pd = el("pgDate").value;
     var win = parseInt(el("pgWin").value,10)||6;
     var amt = el("pgAmt").value.trim();
+    var basis = el("pgBasis").value;                 // "effective" | "record"
     if(!pd){el("pgOut").innerHTML='<div class="banner warn">Pick a purchase date.</div>';return;}
-    var floor = minusMonthsN(pd, win);
-    // emulate select()
-    var inWindow = ARS_FIXTURE.filter(function(r){
-      return dcmp(r.effectiveDate, pd)<=0 && dcmp(r.effectiveDate, floor)>=0;
-    });
-    var chosen = null;
-    inWindow.forEach(function(r){
-      if(!chosen) chosen=r;
-      else{
-        var c = dcmp(r.effectiveDate, chosen.effectiveDate);
-        if(c>0 || (c===0 && dcmp(r.recordDate, chosen.recordDate)>0)) chosen=r;
-      }
-    });
-    // rows table
+    var floor = minusMonths(pd, win);
+    var label = basis==="record" ? "record_date" : "effective_date";
+    var otherBasis = basis==="record" ? "effective" : "record";
+    var otherLabel = basis==="record" ? "effective_date" : "record_date";
+    var chosen = selectRate(basis, pd, floor);
+    var other  = selectRate(otherBasis, pd, floor);  // the OTHER reading, for the divergence note
+    // rows table — the outcome column reflects the ACTIVE basis
     var rows = ARS_FIXTURE.map(function(r){
-      var status, badge;
-      if(dcmp(r.effectiveDate, pd)>0){status="not yet effective"; badge='<span class="badge future">excluded — after purchase</span>';}
-      else if(dcmp(r.effectiveDate, floor)<0){status="older than window"; badge='<span class="badge out">excluded — before floor</span>';}
-      else if(chosen && r===chosen){status="selected"; badge='<span class="badge chosen">✓ SELECTED</span>';}
-      else {status="in window, not latest"; badge='<span class="badge out">in window</span>';}
+      var p = primaryOf(r, basis), badge;
+      if(dcmp(p, pd)>0){badge='<span class="badge future">excluded — after purchase</span>';}
+      else if(dcmp(p, floor)<0){badge='<span class="badge out">excluded — before floor</span>';}
+      else if(chosen && r===chosen){badge='<span class="badge chosen">✓ SELECTED</span>';}
+      else {badge='<span class="badge out">in window</span>';}
       var rowCls = (chosen && r===chosen) ? ' class="row-flash"' : '';
       return '<tr'+rowCls+'><td><code>'+r.effectiveDate+'</code></td><td><code>'+r.recordDate+'</code></td>'
-        +'<td><code>'+r.rate+'</code></td><td>'+badge+'</td></tr>';
+        +'<td class="num"><code>'+r.rate+'</code></td><td>'+badge+'</td></tr>';
     }).join("");
+    var ehl = basis==="effective" ? ' class="basis-on"' : '';
+    var rhl = basis==="record" ? ' class="basis-on"' : '';
     var out =
       '<div class="stepbox">purchaseDate = <b>'+pd+'</b>\n'
       +'windowFloor  = purchaseDate.minusMonths('+win+') = <b>'+floor+'</b>\n'
-      +'keep rows where  floor &lt;= effectiveDate &lt;= purchaseDate ,  then max(effectiveDate, recordDate)</div>'
-      +'<table class="mt14"><thead><tr><th>effective_date</th><th>record_date</th><th>rate</th><th>outcome</th></tr></thead><tbody>'
-      +rows+'</tbody></table>';
+      +'basis        = <b>'+label+'</b>\n'
+      +'keep rows where  floor &lt;= '+label+' &lt;= purchaseDate ,  then max('+label+', tiebreak)</div>'
+      +'<div class="table-wrap mt14"><table><thead><tr><th'+ehl+'>effective_date</th><th'+rhl+'>record_date</th>'
+      +'<th class="num">rate</th><th>outcome</th></tr></thead><tbody>'
+      +rows+'</tbody></table></div>';
+    // Teaching note: do the two readings agree for these inputs, or diverge?
+    if(chosen && other && chosen!==other){
+      out += '<div class="banner warn mt8"><b>The two readings diverge here.</b> On <b>'+label+'</b> the winner is '
+        +'<code>'+chosen.rate+'</code> (eff '+chosen.effectiveDate+' / rec '+chosen.recordDate+'); on <b>'+otherLabel
+        +'</b> it would be <code>'+other.rate+'</code> (eff '+other.effectiveDate+' / rec '+other.recordDate+'). '
+        +'The amendment is in effect but not yet recorded — <b>effective_date</b> is the authoritative reading (D-02).</div>';
+    } else if(chosen && other){
+      out += '<div class="faint fs82 mt8">Both readings agree here — they diverge only for a purchase date '
+        +'between an amendment’s effective_date and its later record_date (e.g. 2025-04-20).</div>';
+    }
     if(chosen){
-      var conv;
-      try{ conv = convertMoney(amt, chosen.rate).result; }catch(e){ conv = "(enter a valid ≤2dp amount)"; }
+      var convDisplay;
+      try{ convDisplay = formatMoney(convertMoney(amt, chosen.rate).result, "ARS"); }
+      catch(e){ convDisplay = "(enter a valid ≤2dp amount)"; }
       out += '<div class="result-box good flash-ring"><h4 class="m0b6">Result — 200 OK</h4>'
-        +'<div>Chosen rate (effective '+chosen.effectiveDate+'): <span class="bignum c-ok pop">'+chosen.rate+'</span></div>'
-        +'<div class="muted mt6">'+escapeHtml(amt)+' USD × '+chosen.rate+' = <b class="c-fg">'+conv+' ARS</b> '
+        +'<div>Chosen rate ('+label+' '+primaryOf(chosen,basis)+'): <span class="bignum c-ok pop">'+chosen.rate+'</span></div>'
+        +'<div class="muted mt6">'+escapeHtml(amt)+' USD × '+chosen.rate+' = <b class="c-fg">'+convDisplay+'</b> '
         +'<span class="faint">(round once, HALF_UP, scale 2)</span></div></div>';
     } else {
       out += '<div class="result-box bad flash-ring"><h4 class="m0b6">Result — 422 NO_RATE_AVAILABLE</h4>'
-        +'<div class="muted">No Treasury rate for USD→ARS within '+win+' months on/before '+pd+' (floor '+floor+'). '
-        +'The purchase is stored, but cannot be converted — R2\'s mandated error path.</div></div>';
+        +'<div class="muted">No Treasury rate for USD→ARS within '+win+' months on/before '+pd+' (floor '+floor+') '
+        +'on '+label+'. The purchase is stored, but cannot be converted — R2\'s mandated error path.</div></div>';
     }
     el("pgOut").innerHTML = out;
   }
-  function minusMonthsN(dateStr, n){ return minusMonths(dateStr, n); }
   el("pgRun").addEventListener("click", run);
   el("pgDate").addEventListener("change", run);
   el("pgWin").addEventListener("change", run);
   el("pgAmt").addEventListener("input", run);
+  el("pgBasis").addEventListener("change", run);
   run();
 };
 
@@ -570,12 +619,15 @@ RENDER.money = function(){
   + '(<b>no float anywhere</b>), full-precision multiply, then a <b>single</b> HALF_UP rounding to scale 2.</p>'
   + '<div class="card">'
     + '<div class="ep-row">'
-      + '<div class="control"><label>Original amount (USD, ≤2dp)</label><input type="text" id="mAmt" value="100.00" class="w150"></div>'
-      + '<div class="control"><label>Exchange rate</label><input type="text" id="mRate" value="0.924" class="w150"></div>'
-      + '<div class="control"><label>Target</label><input type="text" id="mCur" value="EUR" class="w90"></div>'
+      + '<div class="control"><label for="mAmt">Original amount (USD, ≤2dp)</label><input type="text" id="mAmt" value="100.00" class="w150"></div>'
+      + '<div class="control"><label for="mRate">Exchange rate</label><input type="text" id="mRate" value="0.924" class="w150"></div>'
+      + '<div class="control"><label for="mCur">Target</label><input type="text" id="mCur" value="EUR" class="w90"></div>'
       + '<button class="btn blue" id="mRun">Convert</button>'
     + '</div>'
   + '</div>'
+  + '<p class="faint fs82 mt6">Zero-minor-unit currencies (e.g. <b>JPY</b>) still render <b>2 decimals</b> by wire contract — '
+  + 'the service formats every converted amount at scale 2 regardless of the currency’s real minor unit, so <code>…00</code> '
+  + 'on JPY is expected, not a bug (see the currency map note in the <a data-goto="tour">Code tour</a>).</p>'
   + '<div id="mOut"></div>'
   + '<h3>The Java it mirrors</h3>'
   + codeblock("domain/money/Money.java", SNIP.money, "java")
@@ -593,12 +645,12 @@ INIT.money = function(){
     try{
       var c = convertMoney(a, r);
       out = '<div class="result-box good">'
-        + '<div class="bignum c-ok">'+c.result+' '+escapeHtml(cur)+'</div>'
+        + '<div class="bignum c-ok num">'+formatMoney(c.result)+' '+escapeHtml(cur)+'</div>'
         + '<div class="stepbox mt10">'
-        + 'principal  = '+c.principal+'            <span class="faint">(scale 2, padded — never rounded down)</span>\n'
+        + 'principal  = '+formatMoney(c.principal)+'            <span class="faint">(scale 2, padded — never rounded down)</span>\n'
         + 'rate       = '+escapeHtml(r)+'             <span class="faint">(scale '+c.rateScale+', NOT pre-rounded)</span>\n'
-        + 'product    = '+c.productRaw+'   <span class="faint">(full precision, scale '+c.productScale+')</span>\n'
-        + 'round once = <b>'+c.result+'</b>          <span class="faint">(HALF_UP -> scale 2)</span></div>'
+        + 'product    = '+formatMoney(c.productRaw)+'   <span class="faint">(full precision, scale '+c.productScale+')</span>\n'
+        + 'round once = <b>'+formatMoney(c.result)+'</b>          <span class="faint">(HALF_UP -> scale 2)</span></div>'
         + '</div>';
     }catch(e){
       out = '<div class="result-box bad"><h4 class="m0b6">Rejected</h4>'
@@ -674,6 +726,13 @@ function defaultBase(){
 function baseUrl(){
   return (localStorage.getItem("fx_base_url") || defaultBase()).replace(/\/+$/,"");
 }
+// Fire-and-forget health ping to start waking a slept free instance the moment the user enters the
+// Live App tab, so a real Send is more likely to land warm. Non-blocking, result ignored, runs once.
+var _prewarmed = false;
+function prewarmLive(){
+  if(_prewarmed) return; _prewarmed = true;
+  try{ fetch(baseUrl()+"/actuator/health",{headers:{Accept:"application/json"}}).catch(function(){}); }catch(_){}
+}
 /* Make the repo links (docs AND source files) resolve in every context. `data-doc` holds a
    repo-root-relative path, optionally with a GitHub line anchor, e.g. "docs/DECISION_LOG.md" or
    "src/main/java/com/wex/fx/domain/rate/RateSelector.java#L44-L55". This file lives at
@@ -726,9 +785,10 @@ RENDER.connect = function(){
     + '<div id="cOut" class="mt8"></div>'
   + '</div>'
   + '<p class="muted mt6"><b>Cold start:</b> on the free tier the first request after ~15 min idle takes ~1 min while the '
-  + 'instance wakes — a hosting trait, not an app warm-up cost.</p>'
+  + 'instance wakes — a hosting trait, not an app warm-up cost. The explorer prewarms it as soon as you open the Live App '
+  + 'tab, and live <b>Send</b> calls wait through a cold start with a visible “waking…” indicator.</p>'
   + '<details class="mt8"><summary class="muted">Advanced — point at a different instance</summary>'
-    + '<div class="card mt8"><div class="control"><label>Base URL</label>'
+    + '<div class="card mt8"><div class="control"><label for="cBase">Base URL</label>'
     + '<div class="ep-row"><input type="text" id="cBase" value="'+escapeHtml(bu)+'" class="grow260">'
     + '<button class="btn" id="cSave">Save</button></div></div>'
     + '<p class="muted mt6">Remembered in this browser. Pointing at a <i>different</i> origin is a best-effort '
@@ -824,14 +884,16 @@ RENDER.api = function(){
   html += '<div class="card"><h3 class="m0b6">Sample data — real records already in the ledger</h3>'
     + '<p class="muted mb6">Seeded corporate-card purchases (USD principal). <b>View</b> reads one back; '
     + '<b>Convert</b> runs it through the live Treasury rate selection to EUR.</p>'
-    + '<table><thead><tr><th>Description</th><th>Date</th><th>Amount (USD)</th><th></th></tr></thead><tbody>';
+    + '<div class="table-wrap"><table><thead><tr><th>Description</th><th>Date</th>'
+    + '<th class="num">Amount (USD)</th><th></th></tr></thead><tbody>';
   SAMPLE.forEach(function(s){
-    html += '<tr><td>'+escapeHtml(s.desc)+'</td><td><code>'+s.date+'</code></td><td>'+escapeHtml(s.amt)+'</td>'
+    html += '<tr><td>'+escapeHtml(s.desc)+'</td><td><code>'+s.date+'</code></td>'
+      + '<td class="num">'+formatMoney(s.amt)+'</td>'
       + '<td><button class="btn" data-sv="'+s.id+'">View</button> '
       + '<button class="btn" data-sc="'+s.id+'">Convert→EUR</button> '
       + '<button class="btn" data-copytext="'+s.id+'" title="Copy id">⧉ id</button></td></tr>';
   });
-  html += '</tbody></table></div>';
+  html += '</tbody></table></div></div>';
 
   // --- Endpoint builders ---
   ENDPOINTS.forEach(function(ep,i){
@@ -844,8 +906,9 @@ RENDER.api = function(){
         + '<div class="ep-row">';
     ep.fields.forEach(function(f){
       var listAttr = f[3] ? ' list="'+f[3]+'"' : '';
-      html += '<div class="control"><label>'+f[0]+'</label>'
-        + '<input type="'+f[1]+'"'+listAttr+' data-field="'+ep.id+":"+f[0]+'" value="'+escapeHtml(f[2])+'" class="mw170"></div>';
+      var fid = "fld_"+ep.id+"_"+f[0];
+      html += '<div class="control"><label for="'+fid+'">'+f[0]+'</label>'
+        + '<input type="'+f[1]+'" id="'+fid+'"'+listAttr+' data-field="'+ep.id+":"+f[0]+'" value="'+escapeHtml(f[2])+'" class="mw170"></div>';
     });
     html += '<button class="btn" data-curl="'+ep.id+'">Copy curl</button>'
       + '<button class="btn primary" data-send="'+ep.id+'">Send (live)</button>'
@@ -858,7 +921,9 @@ RENDER.api = function(){
     html += '<div id="epout_'+ep.id+'"></div></div></div>';
   });
   html += '<div class="banner info">Cold start: on the free tier the first live call after ~15 min idle can take ~1 min to '
-    + 'wake — Send retries once automatically. The <b>curl</b> commands always work too.</div>';
+    + 'wake. <b>Send</b> waits it out with an automatic backoff (up to ~75s) and a live “waking…” indicator, then '
+    + 'falls back to the curl. Entering this tab also prewarms the instance in the background. The <b>curl</b> commands '
+    + 'always work too.</div>';
   return html;
 };
 INIT.api = function(){
@@ -878,47 +943,59 @@ INIT.api = function(){
   }
   function openEp(epId){ var e2 = el("ep_"+epId); if(e2) e2.classList.add("open"); return e2; }
 
-  // One live call with a single automatic cold-start retry. Renders into `out`.
-  function liveFetch(req, out, epId, attempt){
-    attempt = attempt || 1;
-    var t0 = Date.now();
-    if(attempt===1) out.innerHTML = '<div class="stepbox">'+req.method+' '+escapeHtml(req.url)+' …</div>';
-    var opt = {method:req.method, headers:req.headers};
-    if(req.body) opt.body = req.body;
-    return fetch(req.url, opt).then(function(r){
-      return r.text().then(function(txt){
-        var ms = Date.now()-t0;
-        var pretty = txt; try{ pretty = JSON.stringify(JSON.parse(txt),null,2); }catch(_){}
-        out.innerHTML = '<div class="result-box '+(r.ok?"good":"bad")+'"><h4 class="m0b6">HTTP '+r.status
-          + ' <span class="muted">· '+ms+' ms</span></h4>'+codeblock("response", pretty||"(empty)", "json", true)+'</div>';
-        wireCopy();
-        if(r.ok && epId==="create"){
-          var idv = null; try{ idv = JSON.parse(txt).id; }catch(_){}
-          if(idv){
-            setField("get","id",idv); setField("convert","id",idv);
-            openEp("get"); openEp("convert");
-            out.querySelector(".result-box").insertAdjacentHTML("beforeend",
-              '<div class="banner info mt6">Stored — id <code>'+escapeHtml(idv)+'</code> wired into the '
-              + '<b>GET</b> and <b>Convert</b> calls below.</div>');
-            toast("id wired into GET & Convert");
-          }
-        }
-        return r;
-      });
-    }).catch(function(err){
-      if(attempt===1){
-        out.innerHTML = '<div class="stepbox">No response yet — the free instance may be waking (~1 min). Retrying…</div>';
-        return new Promise(function(res){ setTimeout(res, 2800); }).then(function(){ return liveFetch(req,out,epId,2); });
+  // Render a completed HTTP response (any status) into `out`, wiring a created id into GET/Convert.
+  function renderResponse(r, txt, out, epId, t0){
+    var ms = Date.now()-t0;
+    var pretty = txt; try{ pretty = JSON.stringify(JSON.parse(txt),null,2); }catch(_){}
+    out.innerHTML = '<div class="result-box '+(r.ok?"good":"bad")+'"><h4 class="m0b6">HTTP '+r.status
+      + ' <span class="muted">· '+ms+' ms</span></h4>'+codeblock("response", pretty||"(empty)", "json", true)+'</div>';
+    wireCopy();
+    if(r.ok && epId==="create"){
+      var idv = null; try{ idv = JSON.parse(txt).id; }catch(_){}
+      if(idv){
+        setField("get","id",idv); setField("convert","id",idv);
+        openEp("get"); openEp("convert");
+        out.querySelector(".result-box").insertAdjacentHTML("beforeend",
+          '<div class="banner info mt6">Stored — id <code>'+escapeHtml(idv)+'</code> wired into the '
+          + '<b>GET</b> and <b>Convert</b> calls below.</div>');
+        toast("id wired into GET & Convert");
       }
-      out.innerHTML = '<div class="result-box bad"><h4 class="m0b6">Request blocked / failed</h4>'
-        + '<div class="muted mt4">'+escapeHtml(String(err))+' — likely CORS (a cross-origin instance), or the '
-        + 'service is asleep/unreachable. Copy the curl above; it always works.</div></div>';
-    });
+    }
+  }
+  // Bounded cold-start backoff. A slept Render free instance can take ~1 min to wake: a *network*
+  // failure (fetch rejects) is retried on this schedule behind a visible "waking…" state with elapsed
+  // time; any HTTP response (even a 5xx) is a real answer and renders immediately. Total budget ~71s,
+  // then the terminal curl fallback. A warm same-origin instance answers on the first try — no delay.
+  var COLD_BACKOFF = [3000, 6000, 12000, 20000, 30000];
+  function liveFetch(req, out, epId){
+    var t0 = Date.now();
+    out.innerHTML = '<div class="stepbox">'+req.method+' '+escapeHtml(req.url)+' …</div>';
+    function attempt(i){
+      var opt = {method:req.method, headers:req.headers};
+      if(req.body) opt.body = req.body;
+      return fetch(req.url, opt).then(function(r){
+        return r.text().then(function(txt){ renderResponse(r, txt, out, epId, t0); return r; });
+      }).catch(function(err){
+        if(i < COLD_BACKOFF.length){
+          var elapsed = Math.round((Date.now()-t0)/1000);
+          out.innerHTML = '<div class="result-box"><h4 class="m0b6">⏳ Waking the free instance… '
+            + '<span class="muted">~1 min cold start · '+elapsed+'s elapsed</span></h4>'
+            + '<div class="muted mt6">Render free-tier instances sleep after ~15 min idle. '
+            + 'Retrying automatically — attempt '+(i+1)+' of '+COLD_BACKOFF.length+'…</div>'
+            + '<div class="wake-bar mt8"><span></span></div></div>';
+          return new Promise(function(res){ setTimeout(res, COLD_BACKOFF[i]); }).then(function(){ return attempt(i+1); });
+        }
+        out.innerHTML = '<div class="result-box bad"><h4 class="m0b6">Request blocked / failed</h4>'
+          + '<div class="muted mt4">'+escapeHtml(String(err))+' — after ~'+Math.round((Date.now()-t0)/1000)+'s the '
+          + 'service is still unreachable (it may be cross-origin / CORS, or down). Copy the curl above; it always works.</div></div>';
+      });
+    }
+    return attempt(0);
   }
   function doSend(epId){
     var bv = vals(epId); var req = bv.ep.build(bv.v);
     openEp(epId);
-    liveFetch(req, el("epout_"+epId), epId, 1);
+    liveFetch(req, el("epout_"+epId), epId);
   }
 
   root.addEventListener("click", function(e){
@@ -1022,8 +1099,20 @@ function kpi(color,big,label){
   return '<div class="card"><div class="kpi '+color+'">'+big+'</div><div class="muted fs85">'+label+'</div></div>';
 }
 function navcard(id,title,desc){
-  return '<div class="card hl clickable" data-goto="'+id+'"><h4 class="c-fg">'+title+'</h4>'
-    + '<p class="muted m3em">'+desc+'</p></div>';
+  // A real <a> (href wired by wireNavHrefs) so it is Tab-focusable and Enter-activatable, not mouse-only.
+  return '<a class="card hl clickable" data-goto="'+id+'"><h4 class="c-fg">'+title+'</h4>'
+    + '<p class="muted m3em">'+desc+'</p></a>';
+}
+// Give every in-app nav link (data-goto / data-ctx) a real hash href matching the router scheme, so
+// the whole primary navigation is keyboard-reachable and Enter-activatable. The click delegate still
+// preventDefault()s and routes in-app, so the hash href is just the accessibility affordance.
+function wireNavHrefs(){
+  Array.prototype.forEach.call(document.querySelectorAll('a[data-goto],a[data-ctx]'), function(a){
+    if(a.getAttribute("href")) return;
+    var id = a.getAttribute("data-goto"), ctx = a.getAttribute("data-ctx");
+    if(id){ a.setAttribute("href", "#"+(ctx||state.ctx)+"/"+id); }
+    else if(ctx && SECTIONS[ctx]){ a.setAttribute("href", "#"+ctx+"/"+SECTIONS[ctx][0].id); }
+  });
 }
 
 /* ===================== copy wiring ===================== */
@@ -1042,9 +1131,8 @@ function setContext(ctx){
   state.ctx = ctx;
   state.id = SECTIONS[ctx][0].id;
   document.body.className = "ctx-"+ctx;
-  Array.prototype.forEach.call(document.querySelectorAll(".toggle button"), function(b){
-    b.classList.toggle("active", b.getAttribute("data-ctx")===ctx);
-  });
+  syncToggle(ctx);
+  if(ctx==="live") prewarmLive();   // start waking a slept free instance before the first Send
   el("sideLabel").textContent = ctx==="codebase" ? "Explore the code" : "Explore the live app";
   renderNav(); renderSection(); syncHash();
 }
@@ -1070,6 +1158,15 @@ function renderSection(){
   if(INIT[state.id]) INIT[state.id]();
   wireCopy();
   wireDocLinks();
+  wireNavHrefs();
+}
+// Reflect the active context on the tablist: .active styling + aria-selected for assistive tech.
+function syncToggle(ctx){
+  Array.prototype.forEach.call(document.querySelectorAll(".toggle button"), function(b){
+    var on = b.getAttribute("data-ctx")===ctx;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
 }
 function syncHash(){ history.replaceState(null,"","#"+state.ctx+"/"+state.id); }
 
@@ -1090,9 +1187,8 @@ document.addEventListener("click", function(e){
     state.ctx = h[0]; state.id = h[1];
   }
   document.body.className = "ctx-"+state.ctx;
-  Array.prototype.forEach.call(document.querySelectorAll(".toggle button"), function(b){
-    b.classList.toggle("active", b.getAttribute("data-ctx")===state.ctx);
-  });
+  syncToggle(state.ctx);
+  if(state.ctx==="live") prewarmLive();
   el("sideLabel").textContent = state.ctx==="codebase" ? "Explore the code" : "Explore the live app";
   renderNav(); renderSection();
 })();

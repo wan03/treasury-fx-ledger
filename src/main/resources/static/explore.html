@@ -15,8 +15,8 @@
   <div class="brand"><span class="dot">●</span> WEX&nbsp;FX&nbsp;Ledger <small>interactive explorer</small></div>
   <div class="spacer"></div>
   <div class="toggle" role="tablist" aria-label="Context">
-    <button data-ctx="codebase" class="active" role="tab"><span class="ic">&lt;/&gt;</span> Codebase</button>
-    <button data-ctx="live" role="tab"><span class="ic">◉</span> Live&nbsp;App</button>
+    <button data-ctx="codebase" class="active" role="tab" aria-selected="true" aria-controls="main"><span class="ic">&lt;/&gt;</span> Codebase</button>
+    <button data-ctx="live" role="tab" aria-selected="false" aria-controls="main"><span class="ic">◉</span> Live&nbsp;App</button>
   </div>
   <div class="spacer"></div>
   <a class="readme-link" href="../README.md" data-doc="README.md">↩ README</a>
@@ -36,7 +36,7 @@
   No tracking, no external requests except the optional live API calls you trigger.
 </footer>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="explore.js"></script>
 </body>
