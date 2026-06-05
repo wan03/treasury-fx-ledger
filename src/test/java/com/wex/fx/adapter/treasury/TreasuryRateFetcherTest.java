@@ -134,10 +134,53 @@ class TreasuryRateFetcherTest {
         server.verify();
     }
 
+    @Test
+    void window_fetch_pages_through_every_result_following_total_pages() {
+        // Page 1 of 2 (meta.total-pages=2) — the fetcher must request page[number]=1 first…
+        server.expect(request -> {
+            assertThat(request.getURI().getQuery())
+                    .contains("page[size]=1000")
+                    .contains("page[number]=1");
+        }).andRespond(withSuccess(
+                pagedBody(2, row("Argentina-Peso", "1230.0", "2025-04-15", "2025-04-30")),
+                MediaType.APPLICATION_JSON));
+        // …then page[number]=2, accumulating its rows too (no silent truncation at the 1000 cap).
+        server.expect(request -> {
+            assertThat(request.getURI().getQuery()).contains("page[number]=2");
+        }).andRespond(withSuccess(
+                pagedBody(2, row("Argentina-Peso", "1093.0", "2025-03-31", "2025-03-31")),
+                MediaType.APPLICATION_JSON));
+
+        List<ExchangeRate> rates = fetcher.fetchWindow("Argentina-Peso", GTE, LTE);
+
+        assertThat(rates).extracting(ExchangeRate::effectiveDate)
+                .containsExactly(LocalDate.parse("2025-04-15"), LocalDate.parse("2025-03-31"));
+        server.verify(); // exactly two pages requested — a third would fail the ordered expectations
+    }
+
+    @Test
+    void window_fetch_of_a_single_page_makes_one_request() {
+        // No meta.total-pages → totalPages defaults to 1, so the loop stops after the first page.
+        server.expect(request -> {
+            assertThat(request.getURI().getQuery())
+                    .contains("page[size]=1000")
+                    .contains("page[number]=1");
+        }).andRespond(withSuccess(
+                body(row("Argentina-Peso", "1230.0", "2025-04-15", "2025-04-30")),
+                MediaType.APPLICATION_JSON));
+
+        assertThat(fetcher.fetchWindow("Argentina-Peso", GTE, LTE)).hasSize(1);
+        server.verify();
+    }
+
     // --- JSON fixtures (captured Treasury shape) -------------------------------------------------
 
     private static String body(String... rows) {
         return "{\"data\":[" + String.join(",", rows) + "],\"meta\":{\"count\":" + rows.length + "}}";
+    }
+
+    private static String pagedBody(int totalPages, String... rows) {
+        return "{\"data\":[" + String.join(",", rows) + "],\"meta\":{\"total-pages\":" + totalPages + "}}";
     }
 
     private static String row(String desc, String rate, String effective, String record) {

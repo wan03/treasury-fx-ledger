@@ -1,0 +1,26 @@
+# =============================================================================
+# Dependabot — keeps pinned dependencies under continuous vulnerability/update
+# watch (finding #4). Pinned versions never raise alerts on their own; Dependabot
+# opens update PRs that then ride the normal fast CI gate. Two ecosystems:
+#   • gradle         — app + build-script dependencies (build.gradle.kts).
+#   • github-actions — the workflow action pins (checkout, setup-java, Trivy…).
+# Weekly cadence keeps the noise low while staying current.
+# =============================================================================
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions

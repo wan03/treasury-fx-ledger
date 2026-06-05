@@ -7,6 +7,7 @@ import com.wex.fx.domain.rate.RateSelector;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType;
+import io.github.resilience4j.core.IntervalFunction;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import java.time.Clock;
@@ -18,7 +19,6 @@ import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -35,13 +35,12 @@ import org.springframework.web.client.RestClient;
  * on transient upstream failures only (5xx / timeout); a {@code 4xx} or a malformed body is neither retried
  * nor counted against the breaker (the breaker gauges upstream <em>health</em>, not our bad requests).
  *
- * <p>{@link EnableScheduling} powers B/C's background reconcile; the only {@code @Scheduled} holder
- * ({@link RateSyncService}) is created only for {@code ingest}/{@code hybrid}, so on A0/A there are no
- * scheduled tasks and the annotation is inert.
+ * <p>Scheduling is enabled app-wide by the neutral {@code config.SchedulingConfig}; B/C's background
+ * reconcile ({@link RateSyncService}) is the only {@code @Scheduled} holder here, created solely for
+ * {@code ingest}/{@code hybrid}, so on A0/A there are no scheduled tasks from this config.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(RatesProperties.class)
-@EnableScheduling
 class TreasuryRateProviderConfiguration {
 
     @Bean
@@ -86,7 +85,12 @@ class TreasuryRateProviderConfiguration {
         RatesProperties.Resilience r = props.resilience();
         RetryConfig config = RetryConfig.custom()
                 .maxAttempts(r.maxAttempts())
-                .waitDuration(r.retryBackoff())
+                // Exponential backoff WITH jitter (constitution §7): a fixed wait re-synchronizes
+                // retry waves on recovery — every caller re-hits Treasury on the same tick. The
+                // randomization factor spreads them out. `intervalFunction` and `waitDuration` are
+                // mutually exclusive in RetryConfig, so the interval function is the only wait knob.
+                .intervalFunction(IntervalFunction.ofExponentialRandomBackoff(
+                        r.retryBackoff(), r.retryMultiplier(), r.retryRandomizationFactor()))
                 // Retry transient upstream failures only — never a 4xx or a malformed body.
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build();

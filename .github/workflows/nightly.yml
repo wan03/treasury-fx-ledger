@@ -7,6 +7,10 @@
 #                   (continue-on-error): real-network drift is a signal to read,
 #                   never a reason to block. GitHub runners ship Docker, so
 #                   Testcontainers uses it directly (no Podman/Ryuk shim).
+#   • scan        — Trivy SCA/filesystem CVE scan (finding #4). NON-GATING to
+#                   start (exit-code 0 + continue-on-error): it reports HIGH/
+#                   CRITICAL findings as a SARIF artifact so we can ratchet to
+#                   blocking once the baseline is clean, without ever slowing a PR.
 # Runs on a schedule and on demand — never on pull_request.
 # =============================================================================
 name: nightly
@@ -85,4 +89,39 @@ jobs:
         with:
           name: canary-test-report
           path: build/reports/tests/integrationTest
+          if-no-files-found: ignore
+
+  scan:
+    name: dependency & filesystem CVE scan (Trivy, non-gating)
+    runs-on: ubuntu-latest
+    # Report-only to start: a known CVE in a transitive pin must SURFACE (SARIF
+    # artifact), not block the pipeline. Ratchet exit-code → 1 once the baseline
+    # is clean to make HIGH/CRITICAL gating.
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem/dependency scan (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "0" # non-gating to start; flip to "1" once the baseline is clean
+      - name: Upload Trivy SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+      - name: Publish Trivy report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif
+          path: trivy-results.sarif
           if-no-files-found: ignore

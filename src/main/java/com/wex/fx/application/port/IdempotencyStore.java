@@ -34,6 +34,16 @@ public interface IdempotencyStore {
             PurchaseResponse responseBody,
             Instant expiresAt);
 
+    /**
+     * Deletes up to {@code batchLimit} rows whose {@code expires_at} is strictly before {@code now},
+     * returning how many were removed. Bounded so the sweep holds only short lock windows; the caller
+     * loops until a partial batch signals the backlog is drained. Uses the injected {@link Clock}'s
+     * {@code now} so the cutoff is deterministic in tests.
+     *
+     * @return the number of expired rows deleted (0..{@code batchLimit})
+     */
+    int deleteExpired(Instant now, int batchLimit);
+
     /** The replayable record for a previously-seen idempotency key. */
     record StoredResponse(String requestHash, int responseStatus, PurchaseResponse responseBody) {}
 }

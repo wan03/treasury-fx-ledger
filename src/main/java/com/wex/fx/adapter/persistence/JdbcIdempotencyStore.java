@@ -38,6 +38,16 @@ class JdbcIdempotencyStore implements IdempotencyStore {
     private static final String SELECT =
             "SELECT request_hash, response_status, response_body FROM idempotency_keys WHERE key = :key";
 
+    // Bounded delete: the inner SELECT picks at most :limit expired ctids, so each statement takes a
+    // short lock window instead of one unbounded DELETE holding locks across the whole expired backlog.
+    private static final String DELETE_EXPIRED =
+            """
+            DELETE FROM idempotency_keys
+            WHERE ctid IN (
+                SELECT ctid FROM idempotency_keys WHERE expires_at < :now LIMIT :limit
+            )
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
 
@@ -78,6 +88,14 @@ class JdbcIdempotencyStore implements IdempotencyStore {
             // A concurrent request already committed this key — surface as a domain signal.
             throw new DuplicateIdempotencyKeyException(key, e);
         }
+    }
+
+    @Override
+    public int deleteExpired(Instant now, int batchLimit) {
+        var params = new MapSqlParameterSource()
+                .addValue("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+                .addValue("limit", batchLimit);
+        return jdbc.update(DELETE_EXPIRED, params);
     }
 
     private String serialize(PurchaseResponse body) {

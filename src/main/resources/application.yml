@@ -32,6 +32,21 @@ spring:
     enabled: true
     # DDL runs as the least-privilege `migration` role (see data-model.md / .env).
     locations: classpath:db/migration
+  # Hikari tuning + Postgres session guards on the APP datasource only (NOT Flyway — its
+  # `spring.flyway.*` connection is separate, so migrations can legitimately run long). A stuck
+  # statement or a lock wait must never pin a pooled connection until the 30s default and cascade
+  # into pool exhaustion. `connection-init-sql` runs once per physical connection (resiliency #2):
+  #   • statement_timeout 3s — every app query is a sub-ms PK op, so 3s is generous headroom;
+  #   • lock_timeout 2s      — fail fast rather than queue behind a held row lock;
+  #   • idle_in_transaction 10s — reap a connection abandoned mid-transaction.
+  # connection-timeout is in ms (Hikari) — fail acquisition fast (5s), not the 30s default.
+  datasource:
+    hikari:
+      connection-timeout: 5000          # ms — fail fast acquiring a pooled connection
+      validation-timeout: 3000          # ms
+      keepalive-time: 120000            # ms — probe idle connections so dead ones are evicted early
+      max-lifetime: 1800000             # ms — recycle a connection well before any server-side cap
+      connection-init-sql: "SET statement_timeout = '3s'; SET lock_timeout = '2s'; SET idle_in_transaction_session_timeout = '10s'"
 
 # Graceful shutdown so Render's 15-min spin-down/restart is clean (D-12).
 server:
@@ -51,6 +66,11 @@ fx:
   # POST idempotency replay window (data-model.md). After it lapses the swept key may be reused.
   idempotency:
     ttl: 24h
+    # TTL sweep (finding #1): IdempotencySweeper deletes rows past `expires_at` so the table can't grow
+    # unbounded. `sweep-interval` is the scheduled cadence (also the initial delay, so it never fires
+    # mid-startup); `sweep-batch-size` bounds each DELETE's lock window — the sweep loops until drained.
+    sweep-interval: 1h
+    sweep-batch-size: 1000
   # fx.rates.* binds to RatesProperties (@ConfigurationProperties). Every key is optional —
   # @DefaultValue mirrors the values below — but we spell out the production posture here so the
   # operational knobs (timeouts, retry/breaker thresholds, cache TTLs) are discoverable, not magic.
@@ -75,7 +95,12 @@ fx:
     # never on a 4xx or a malformed body; the breaker fails fast once the recent failure rate trips.
     resilience:
       max-attempts: 2
+      # Exponential backoff with jitter: initial wait `retry-backoff`, grown by `retry-multiplier`
+      # per attempt, randomized by ±`retry-randomization-factor` to de-synchronize retry waves.
+      # With max-attempts=2 the single backoff lands in [100ms, 300ms] — worst case well under 1s.
       retry-backoff: 200ms
+      retry-multiplier: 2.0
+      retry-randomization-factor: 0.5
       sliding-window-size: 20
       # Keep <= sliding-window-size; the Resilience4j default (100) would never be reached by a
       # 20-wide COUNT_BASED window, leaving the breaker permanently closed.
@@ -94,7 +119,11 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # Only `health` is exposed — liveness/readiness probes and the platform health
+        # check (Render `healthCheckPath: /actuator/health`, the explorer's health widget)
+        # need nothing else. `/info` carried no value and is dropped to shrink the surface
+        # (constitution §9). `GET /actuator/info` therefore returns 404.
+        include: health
   endpoint:
     health:
       probes:
@@ -175,6 +204,10 @@ spring:
     username: ${DATABASE_USERNAME}
     password: ${DATABASE_PASSWORD}
     hikari:
+      # Pool size (default 10, override via DB_POOL_SIZE). Virtual threads (D-10) make request
+      # threads cheap, but the DB pool is the real concurrency bound: every conversion does at most a
+      # couple of sub-ms PK queries, so 10 connections sustain a high request rate without starving
+      # Neon's connection budget. Raise DB_POOL_SIZE only if connection-wait shows up under load.
       maximum-pool-size: ${DB_POOL_SIZE:10}
   flyway:
     # DDL runs as the migration role on its own connection (distinct from the app
