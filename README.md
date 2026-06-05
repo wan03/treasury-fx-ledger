@@ -245,6 +245,29 @@ and fill in. Profiles: `dev` (local compose) · `test` · `prod`.
 All rate tunables (the 6-month window, timeouts, retry/breaker thresholds, cache TTLs) are bound config,
 not magic numbers — see `fx.rates.*` in [`application.yml`](src/main/resources/application.yml).
 
+### Keeping the demo warm
+
+The free hosting tier sleeps after ~15 min idle (~1-min cold start). To avoid that during review hours,
+an **external uptime pinger** hits `GET /actuator/health` on a schedule — this is the primary keep-warm.
+An external service (e.g. **cron-job.org** / UptimeRobot) is used rather than a GitHub Actions `schedule`,
+because GitHub cron is best-effort and heavily throttled (in practice it never fired reliably here).
+
+Recommended pinger config:
+
+| Setting | Value |
+|---|---|
+| URL | `https://currency-ledger.onrender.com/actuator/health` (GET, expect `200`) |
+| Schedule (cron) | `*/10 13-23 * * 1-5` — every 10 min, **13:00–23:00 UTC**, Mon–Fri |
+
+The window is deliberate, not 24/7: keeping the instance always-on would burn ~730 of Render's
+**750 free instance-hours per month**, so the ping is scoped to likely review hours (≈ 06:00–16:00
+America/Los_Angeles, Render's `oregon` region) — set the pinger's timezone to use local business hours
+instead. The first request after a fresh **deploy** still cold-starts; the pinger keeps it warm thereafter,
+and the explorer shows a friendly “waking…” state for that case regardless.
+
+[`keep-warm.yml`](.github/workflows/keep-warm.yml) remains as a **manual one-click fallback** (Actions →
+*keep-warm* → *Run workflow*) to warm the instance on demand — its unreliable `schedule` trigger was removed.
+
 ---
 
 ## Assumptions (committed defaults — overridable if the brief intends otherwise)
