@@ -47,7 +47,7 @@ repositories {
 
 // Versions for dependencies NOT managed by the Spring Boot BOM.
 val springdocVersion = "2.8.17"   // latest 2.x line (Boot 3.x); 3.x is for Boot 4
-val resilience4jVersion = "2.3.0"
+val resilience4jVersion = "2.4.0"
 val archunitVersion = "1.4.2"
 val jqwikVersion = "1.9.3"         // jqwik engine (property-based); runs on the JUnit Platform below
 // JUnit alignment. Gradle 8.14.5's test worker hard-requires junit-platform-launcher 1.14.x
