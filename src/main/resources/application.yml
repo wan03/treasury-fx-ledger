@@ -57,8 +57,12 @@ fx:
   rates:
     # D-03: A0 passthrough | A on-demand+cache (DEFAULT) | B ingest | C hybrid.
     provider: ondemand
-    # D-02 / rate-selection.md: max(effective_date) ≤ purchaseDate within this many calendar months.
+    # D-02 / rate-selection.md: max(selection-date) ≤ purchaseDate within this many calendar months.
     window-months: 6
+    # D-02: which Treasury date governs selection. effective_date (DEFAULT, authoritative per F8) or
+    # record_date (the literal-brief reading). Identical for every non-amended currency; differ only
+    # across an intra-quarter amendment. Flip to record_date to reproduce the naive reference reading.
+    rate-date-basis: effective_date
     treasury:
       base-url: https://api.fiscaldata.treasury.gov/services/api/fiscal_service
       connect-timeout: 2s             # bounded — never an unbounded wait on the dependency
