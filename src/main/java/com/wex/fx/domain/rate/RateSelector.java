@@ -11,10 +11,11 @@ import java.util.Optional;
  * Treasury rate to apply to a purchase. No HTTP, no Spring, no {@code Clock} &mdash; deterministic
  * over the candidate rows, so it is exhaustively unit-testable.
  *
- * <p>Rule: choose the rate with the <strong>greatest {@code effectiveDate} that is
- * {@code <= purchaseDate}</strong> and {@code >=} {@code purchaseDate} minus the window
- * (default 6 <em>calendar</em> months, inclusive). An empty result is a normal business outcome
- * ({@code 422 NO_RATE_AVAILABLE}), not an exception.
+ * <p>Rule: choose the rate with the <strong>greatest selection date that is {@code <= purchaseDate}</strong>
+ * and {@code >=} {@code purchaseDate} minus the window (default 6 <em>calendar</em> months, inclusive).
+ * The selection date is the {@link RateDateBasis} — {@code effectiveDate} by default (the authoritative
+ * reading, D-02), {@code recordDate} for the literal-brief reading; the two agree for every non-amended
+ * currency. An empty result is a normal business outcome ({@code 422 NO_RATE_AVAILABLE}), not an exception.
  *
  * <p>Even when an adapter pushes the filter down to the server (F7), the caller should still run
  * this function over whatever rows come back &mdash; the push-down is an optimization, this is the
@@ -25,12 +26,19 @@ public final class RateSelector {
     public static final int DEFAULT_WINDOW_MONTHS = 6;
 
     private final int windowMonths;
+    private final RateDateBasis basis;
 
+    /** Window only; defaults the basis to the authoritative {@code effectiveDate} reading (D-02). */
     public RateSelector(int windowMonths) {
+        this(windowMonths, RateDateBasis.EFFECTIVE_DATE);
+    }
+
+    public RateSelector(int windowMonths, RateDateBasis basis) {
         if (windowMonths <= 0) {
             throw new IllegalArgumentException("windowMonths must be positive, was: " + windowMonths);
         }
         this.windowMonths = windowMonths;
+        this.basis = Objects.requireNonNull(basis, "basis must not be null");
     }
 
     public static RateSelector withDefaultWindow() {
@@ -48,10 +56,10 @@ public final class RateSelector {
         }
         LocalDate floor = windowFloor(purchaseDate);
         return candidates.stream()
-                .filter(r -> !r.effectiveDate().isAfter(purchaseDate))  // effectiveDate <= purchaseDate
-                .filter(r -> !r.effectiveDate().isBefore(floor))        // effectiveDate >= floor (inclusive)
-                .max(Comparator.comparing(ExchangeRate::effectiveDate)  // latest effectiveDate wins
-                        .thenComparing(ExchangeRate::recordDate));      // deterministic tiebreak (F8)
+                .filter(r -> !basis.of(r).isAfter(purchaseDate))   // selection date <= purchaseDate
+                .filter(r -> !basis.of(r).isBefore(floor))         // selection date >= floor (inclusive)
+                .max(Comparator.comparing(basis::of)               // latest selection date wins
+                        .thenComparing(basis::tiebreak));          // deterministic tiebreak (F8)
     }
 
     /**

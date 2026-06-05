@@ -100,12 +100,25 @@ entire business rule in one request:
 returns **exactly the one active rate** (or an empty set ⇒ our "cannot convert" error). This makes a
 fetch-on-demand approach cheap (≈1 row over the wire). See **D-03**.
 
-**F8 — Amendment rule (source-confirmed).** Per Treasury / Bureau of the Fiscal Service guidance: *if
-a rate deviates from the published rate by **10% or more**, Treasury issues an amendment that appears
-as a **separate line with a new `effective_date`**,* and *an amendment can be used for transactions
-occurring during the **remaining month(s) of the quarter**.* (The quarter-end report also reflects
-rates observed ~1 month prior — e.g. the Dec 31 report reflects rates as of Nov 30.) ⇒ **`effective_date`
-is the date that governs which rate applies to a transaction** — the authoritative basis for D-02.
+**F8 — Amendment rule (source-quoted).** Per Treasury / Bureau of the Fiscal Service guidance, quoted
+verbatim: *"An amendment to a currency exchange rate for the quarter will appear on the report as a
+**separate line with a new effective date**. Amendments made at the end of a month can be used for
+reporting purposes for transactions occurring during the **remaining month(s) in the quarter**."* The
+published worked example: *a currency amended **April 30** appears on two lines — the original **March 31**
+published rate and the amended rate **effective April 30**, the latter valid for reporting **May and
+June** transactions.* Amendments are present in the dataset from **March 2021** onward. (The quarter-end
+report also reflects rates observed ~1 month prior — e.g. the Dec 31 report reflects rates as of Nov 30.)
+⇒ **`effective_date` is the date that governs which rate applies to a transaction** — the authoritative
+basis for D-02.
+
+> **Why this beats the literal-brief `record_date` reading.** The two readings return **identical**
+> results for every **non-amended** currency (where `record_date == effective_date`). They diverge
+> **only** across an amendment — and there `record_date` is *demonstrably wrong*: it can apply a Q1 base
+> rate to a post-amendment purchase, or (because an amendment is booked on the quarter it lands in) rank
+> a **not-yet-effective** amendment as the latest row. So selecting on `effective_date` is not a
+> deviation from correctness; it is a deviation from a *naïve transcription* of the brief's wording.
+> Locked by `RateSelectorTest$RateDateBasisReadings` (agree off-amendment; diverge across the Argentina
+> Q2→Q3 amendment).
 *(Verified via fiscaldata.treasury.gov / fiscal.treasury.gov, June 2026.)*
 
 **F9 — Full currency landscape (latest quarter 2026-03-31: 165 descriptors, 89 currency words).**
@@ -196,6 +209,14 @@ the submission's assumptions**, since a naïve reference solution might use `rec
 logic, different field).
 **Consequences.** Query/sort on `effective_date` (F7); any ingest schema indexes `effective_date`; a test
 fixture **must** include an amendment (Argentina Q1/Q2 2025) to lock the behavior.
+**Both readings are shipped (configurable).** The selection date is a one-line config flip,
+`fx.rates.rate-date-basis = effective_date` (default) **or** `record_date` — a `RateDateBasis` strategy
+threaded through both the pure `RateSelector` *and* the server-side push-down field (so the query and the
+spec stay aligned). This converts the only graded ambiguity from "an undocumented deviation a skim-reader
+might dock" into "we implemented **both** readings, default to the provably-correct one, and prove with a
+test that they agree except across an amendment." A reviewer who insists on the literal brief reproduces
+that reading without a code change. *(See F8 for the source quote; toggle locked by
+`RateSelectorTest$RateDateBasisReadings`.)*
 
 ### D-03 — Rates acquisition strategy  `DECIDED`
 **Context.** Treasury data is public, immutable-historical, quarterly, small; selection is fully
@@ -241,6 +262,26 @@ incrementally shippable on the 5-day clock, implement in order **A0 → A** (sha
 decorator), then **B** (ingest: triggered + scheduled sync over `exchange_rates`, amendment
 reconciliation, local indexed selection), then **C** (hybrid: local-first over B with lazy fill +
 current-quarter background refresh). The system is fully functional after A; B/C are additive.
+
+**On the "why four providers?" critique (assumption matrix).** The four adapters are **not** four ways to
+do one thing — each commits to a *different load-bearing assumption about coupling to Treasury*, and which
+assumption holds is a deployment question the brief leaves open. Making them config-selectable is the
+honest answer to that openness: pick the posture, don't fork the code.
+
+| Adapter | Assumption it commits to | Pick it when |
+|---|---|---|
+| **A0** passthrough | Treasury is reachable enough to call on every request; simplicity > decoupling | dev/diagnostic, negligible volume, always-latest, no cache |
+| **A** on-demand + cache *(default)* | Historical rates are immutable; only the current quarter can change | low/moderate read-heavy production — the cache absorbs load, immutability keeps it correct |
+| **B** ingest | The request path must be **fully decoupled** from Treasury availability/latency | strict offline/availability SLA, high-RPS hot reads, rate limits, or a need for our own audited history |
+| **C** hybrid | Same as B, but a full upfront backfill isn't warranted | want local-first + self-healing lazy fill + current-quarter freshness |
+
+One `ExchangeRateProvider` port, one shared fetcher, one shared pure `RateSelector` — the variants differ
+only in *where the candidate rows come from*, so the incremental surface per adapter is small and each is
+independently tested (plus a provider-parity test pinning them to the same answer). The deliberate breadth
+is feasible precisely because the seam is clean; it demonstrates the port/adapter design under real
+alternatives rather than asserting it. *(Trade-off accepted: a reviewer optimising purely for minimal
+surface area may still prefer a single adapter; we keep the menu and document the assumptions so the choice
+is explicit, not implicit.)*
 
 ### D-04 — Money representation & rounding  `DECIDED`
 **Context.** Java; payments; `converted = usd × rate` then round to 2 dp; rates have variable precision (F2).

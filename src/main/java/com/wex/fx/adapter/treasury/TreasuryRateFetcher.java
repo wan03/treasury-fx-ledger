@@ -34,9 +34,17 @@ final class TreasuryRateFetcher implements RateFetcher {
     private static final int WINDOW_PAGE_SIZE = 1000;
 
     private final RestClient client;
+    // The Treasury column the selection window is filtered/sorted on — follows the configured
+    // RateDateBasis so the server push-down matches the pure RateSelector (D-02).
+    private final String dateField;
 
     TreasuryRateFetcher(RestClient client) {
+        this(client, "effective_date");
+    }
+
+    TreasuryRateFetcher(RestClient client, String dateField) {
         this.client = client;
+        this.dateField = dateField;
     }
 
     @Override
@@ -52,10 +60,10 @@ final class TreasuryRateFetcher implements RateFetcher {
         return query(filter(descriptor, to, from), WINDOW_PAGE_SIZE);
     }
 
-    private static String filter(String descriptor, LocalDate lte, LocalDate gte) {
+    private String filter(String descriptor, LocalDate lte, LocalDate gte) {
         return "country_currency_desc:eq:" + descriptor
-                + ",effective_date:lte:" + lte
-                + ",effective_date:gte:" + gte;
+                + "," + dateField + ":lte:" + lte
+                + "," + dateField + ":gte:" + gte;
     }
 
     private List<ExchangeRate> query(String filter, int pageSize) {
@@ -63,7 +71,7 @@ final class TreasuryRateFetcher implements RateFetcher {
                 .uri(uri -> uri.path(PATH)
                         .queryParam("fields", FIELDS)
                         .queryParam("filter", filter)
-                        .queryParam("sort", "-effective_date")
+                        .queryParam("sort", "-" + dateField)
                         .queryParam("page[size]", Integer.toString(pageSize))
                         .queryParam("format", "json")
                         .build())
