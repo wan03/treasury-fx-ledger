@@ -222,6 +222,27 @@ var EX = {
 '{\n  "type": "https://api.example.com/problems/no-rate-available",\n  "title": "No exchange rate available",\n  "status": 422,\n  "detail": "No Treasury rate for USD->ARS within 6 months on/before 2019-01-01.",\n  "code": "NO_RATE_AVAILABLE",\n  "traceId": "a3d9...",\n  "instance": "/v1/purchases/.../conversions/ARS"\n}'
 };
 
+/* Real records seeded into the running ledger (R__seed_demo_purchases.sql).
+   KEEP THESE IDS IN SYNC with that migration — the playground reads/convert them live. */
+var SAMPLE = [
+  {id:"019b9dfc-d458-750e-b088-52c157ab639d", desc:"Adobe Creative Cloud - annual team plan", date:"2026-01-08", amt:"8399.40"},
+  {id:"019bc0e6-d540-7cfe-91cf-43fba0b4d643", desc:"United UA931 SFO-LHR - business class",   date:"2026-01-15", amt:"4218.60"},
+  {id:"019bd7c7-33b8-74ef-9773-de735c8b34d1", desc:"Marriott London Kensington - 4 nights",   date:"2026-01-19", amt:"1576.88"},
+  {id:"019c2258-2928-7486-ba74-6cf69890a778", desc:"Shell fleet fuel - Rhine-Main depot",     date:"2026-02-03", amt:"743.21"},
+  {id:"019c26b3-22c0-73f4-8a65-d2ceaf7a31c2", desc:"AWS - January usage, EU-Frankfurt",       date:"2026-02-04", amt:"12904.77"},
+  {id:"019c51ae-3fa0-760f-9efe-1e7beed8f680", desc:"DB Schenker - freight invoice INV-88213", date:"2026-02-12", amt:"9650.00"},
+  {id:"019c5cb3-5ac0-73b0-a261-4c16b1d13f14", desc:"Client dinner - Jiro, Ginza Tokyo",       date:"2026-02-14", amt:"412.00"},
+  {id:"019cad8f-ac00-7668-b401-6aabf0c6b178", desc:"Deutsche Telekom - Q1 roaming & data",     date:"2026-03-02", amt:"388.45"},
+  {id:"019cddb7-c048-7937-92b7-d551426b70d3", desc:"WeWork Moorgate - meeting room day pass",  date:"2026-03-11", amt:"540.00"},
+  {id:"019d9146-fd90-714f-ac1b-c925835e038d", desc:"Staples - office supplies restock",        date:"2026-04-15", amt:"247.83"}
+];
+/* Common targets resolvable through the curated map (offered as a datalist; free entry still allowed
+   so you can also provoke CURRENCY_UNSUPPORTED / malformed errors). XOF != XAF is deliberate. */
+var SUPPORTED_CCY = ["EUR","GBP","JPY","CAD","AUD","CHF","CNY","INR","MXN","BRL","SGD","ZAR","ARS","XOF","XAF","USD"];
+/* A fresh Idempotency-Key per POST so repeated sends each create a new record instead of
+   colliding (same key + different body would be a 409 by design). */
+function newIdemKey(){ return "demo-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7); }
+
 /* ===================== navigation model ===================== */
 var SECTIONS = {
   codebase: [
@@ -744,18 +765,19 @@ var ENDPOINTS = [
     id:"create", method:"POST", badge:"post", path:"/v1/purchases",
     desc:"R1 — store a purchase",
     fields:[
-      ["description","text","Office supplies"],
-      ["transactionDate","text","2025-04-15"],
-      ["amount","text","100.00"]
+      ["description","text","Cloudflare - Pro plan renewal"],
+      ["transactionDate","text","2026-05-12"],
+      ["amount","text","240.00"]
     ],
     build:function(v){
+      var key = newIdemKey();
       var body = JSON.stringify({description:v.description,transactionDate:v.transactionDate,amount:v.amount});
       return {
         method:"POST", url:baseUrl()+"/v1/purchases",
-        headers:{"Content-Type":"application/json","Idempotency-Key":"demo-001"},
+        headers:{"Content-Type":"application/json","Idempotency-Key":key},
         body:body,
         curl:'curl -sS -X POST "'+baseUrl()+'/v1/purchases" '
-          +'-H "Content-Type: application/json" -H "Idempotency-Key: demo-001" '
+          +'-H "Content-Type: application/json" -H "Idempotency-Key: '+key+'" '
           +"-d '"+body+"'"
       };
     },
@@ -764,7 +786,7 @@ var ENDPOINTS = [
   {
     id:"get", method:"GET", badge:"get", path:"/v1/purchases/{id}",
     desc:"read a stored purchase",
-    fields:[["id","text","019e93ff-fbad-7d54-aec5-948f732030b0"]],
+    fields:[["id","text",SAMPLE[0].id]],
     build:function(v){
       var url = baseUrl()+"/v1/purchases/"+encodeURIComponent(v.id);
       return {method:"GET", url:url, headers:{Accept:"application/json"},
@@ -776,8 +798,8 @@ var ENDPOINTS = [
     id:"convert", method:"GET", badge:"get", path:"/v1/purchases/{id}/conversions/{code}",
     desc:"R2 — convert to a target currency",
     fields:[
-      ["id","text","019e93ff-fbad-7d54-aec5-948f732030b0"],
-      ["code","text","EUR"]
+      ["id","text",SAMPLE[0].id],
+      ["code","text","EUR","curlist"]
     ],
     build:function(v){
       var url = baseUrl()+"/v1/purchases/"+encodeURIComponent(v.id)+"/conversions/"+encodeURIComponent(v.code);
@@ -790,10 +812,27 @@ var ENDPOINTS = [
 RENDER.api = function(){
   var html = crossref("codebase")
   + '<h2>API playground</h2>'
-  + '<p class="lead">Build a request, copy a working <b>curl</b>, or hit <b>Send</b> for a best-effort live call. '
-  + 'Every endpoint also shows a <b>real captured response</b>.</p>'
+  + '<p class="lead">Pick a <b>sample record</b> below and hit <b>View</b> or <b>Convert</b>, or build your own request — '
+  + 'copy a working <b>curl</b> or <b>Send</b> it live. Create a purchase and its <code>id</code> is wired straight into '
+  + 'the read &amp; convert calls.</p>'
   + '<div class="faint mb6">Targeting <code id="apiBase">'+escapeHtml(baseUrl())+'</code> '
-  + '(automatic) — override under <a data-goto="connect">Live service</a>.</div>';
+  + '(automatic) — override under <a data-goto="connect">Live service</a>.</div>'
+  + '<datalist id="curlist">'+SUPPORTED_CCY.map(function(c){return '<option value="'+c+'">';}).join("")+'</datalist>';
+
+  // --- Sample data: real, seeded records you can act on immediately ---
+  html += '<div class="card"><h3 class="m0b6">Sample data — real records already in the ledger</h3>'
+    + '<p class="muted mb6">Seeded corporate-card purchases (USD principal). <b>View</b> reads one back; '
+    + '<b>Convert</b> runs it through the live Treasury rate selection to EUR.</p>'
+    + '<table><thead><tr><th>Description</th><th>Date</th><th>Amount (USD)</th><th></th></tr></thead><tbody>';
+  SAMPLE.forEach(function(s){
+    html += '<tr><td>'+escapeHtml(s.desc)+'</td><td><code>'+s.date+'</code></td><td>'+escapeHtml(s.amt)+'</td>'
+      + '<td><button class="btn" data-sv="'+s.id+'">View</button> '
+      + '<button class="btn" data-sc="'+s.id+'">Convert→EUR</button> '
+      + '<button class="btn" data-copytext="'+s.id+'" title="Copy id">⧉ id</button></td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // --- Endpoint builders ---
   ENDPOINTS.forEach(function(ep,i){
     html += '<div class="endpoint'+(i===0?" open":"")+'" id="ep_'+ep.id+'">'
       + '<div class="ep-head" data-toggle="'+ep.id+'">'
@@ -803,16 +842,22 @@ RENDER.api = function(){
       + '<div class="ep-body">'
         + '<div class="ep-row">';
     ep.fields.forEach(function(f){
+      var listAttr = f[3] ? ' list="'+f[3]+'"' : '';
       html += '<div class="control"><label>'+f[0]+'</label>'
-        + '<input type="'+f[1]+'" data-field="'+ep.id+":"+f[0]+'" value="'+escapeHtml(f[2])+'" class="mw170"></div>';
+        + '<input type="'+f[1]+'"'+listAttr+' data-field="'+ep.id+":"+f[0]+'" value="'+escapeHtml(f[2])+'" class="mw170"></div>';
     });
     html += '<button class="btn" data-curl="'+ep.id+'">Copy curl</button>'
       + '<button class="btn primary" data-send="'+ep.id+'">Send (live)</button>'
       + '<button class="btn" data-ex="'+ep.id+'">Show example</button>'
-      + '</div><div id="epout_'+ep.id+'"></div></div></div>';
+      + '</div>';
+    if(ep.id==="create"){
+      html += '<div class="muted mb6">A fresh <code>Idempotency-Key</code> is generated per Send, so each click stores a '
+        + 'new record. On success the returned <code>id</code> auto-fills the GET &amp; Convert calls below.</div>';
+    }
+    html += '<div id="epout_'+ep.id+'"></div></div></div>';
   });
-  html += '<div class="banner warn">Tip: run <code>POST</code> first, copy the returned <code>id</code> into the '
-    + '<code>GET</code> and <code>convert</code> fields. The example <code>id</code> is from a real prior run.</div>';
+  html += '<div class="banner info">Cold start: on the free tier the first live call after ~15 min idle can take ~1 min to '
+    + 'wake — Send retries once automatically. The <b>curl</b> commands always work too.</div>';
   return html;
 };
 INIT.api = function(){
@@ -826,9 +871,69 @@ INIT.api = function(){
     });
     return {ep:ep, v:v};
   }
+  function setField(epId, name, val){
+    var inp = root.querySelector('[data-field="'+epId+":"+name+'"]');
+    if(inp) inp.value = val;
+  }
+  function openEp(epId){ var e2 = el("ep_"+epId); if(e2) e2.classList.add("open"); return e2; }
+
+  // One live call with a single automatic cold-start retry. Renders into `out`.
+  function liveFetch(req, out, epId, attempt){
+    attempt = attempt || 1;
+    var t0 = Date.now();
+    if(attempt===1) out.innerHTML = '<div class="stepbox">'+req.method+' '+escapeHtml(req.url)+' …</div>';
+    var opt = {method:req.method, headers:req.headers};
+    if(req.body) opt.body = req.body;
+    return fetch(req.url, opt).then(function(r){
+      return r.text().then(function(txt){
+        var ms = Date.now()-t0;
+        var pretty = txt; try{ pretty = JSON.stringify(JSON.parse(txt),null,2); }catch(_){}
+        out.innerHTML = '<div class="result-box '+(r.ok?"good":"bad")+'"><h4 class="m0b6">HTTP '+r.status
+          + ' <span class="muted">· '+ms+' ms</span></h4>'+codeblock("response", pretty||"(empty)", "json", true)+'</div>';
+        wireCopy();
+        if(r.ok && epId==="create"){
+          var idv = null; try{ idv = JSON.parse(txt).id; }catch(_){}
+          if(idv){
+            setField("get","id",idv); setField("convert","id",idv);
+            openEp("get"); openEp("convert");
+            out.querySelector(".result-box").insertAdjacentHTML("beforeend",
+              '<div class="banner info mt6">Stored — id <code>'+escapeHtml(idv)+'</code> wired into the '
+              + '<b>GET</b> and <b>Convert</b> calls below.</div>');
+            toast("id wired into GET & Convert");
+          }
+        }
+        return r;
+      });
+    }).catch(function(err){
+      if(attempt===1){
+        out.innerHTML = '<div class="stepbox">No response yet — the free instance may be waking (~1 min). Retrying…</div>';
+        return new Promise(function(res){ setTimeout(res, 2800); }).then(function(){ return liveFetch(req,out,epId,2); });
+      }
+      out.innerHTML = '<div class="result-box bad"><h4 class="m0b6">Request blocked / failed</h4>'
+        + '<div class="muted mt4">'+escapeHtml(String(err))+' — likely CORS (a cross-origin instance), or the '
+        + 'service is asleep/unreachable. Copy the curl above; it always works.</div></div>';
+    });
+  }
+  function doSend(epId){
+    var bv = vals(epId); var req = bv.ep.build(bv.v);
+    openEp(epId);
+    liveFetch(req, el("epout_"+epId), epId, 1);
+  }
+
   root.addEventListener("click", function(e){
-    var t = e.target.closest("[data-toggle],[data-curl],[data-send],[data-ex]");
+    var t = e.target.closest("[data-toggle],[data-curl],[data-send],[data-ex],[data-sv],[data-sc],[data-copytext]");
     if(!t) return;
+    if(t.hasAttribute("data-copytext")){ copy(t.getAttribute("data-copytext")); return; }
+    if(t.hasAttribute("data-sv")){                                   // sample: View
+      setField("get","id",t.getAttribute("data-sv"));
+      var g = openEp("get"); if(g) g.scrollIntoView({behavior:"smooth",block:"start"});
+      doSend("get"); return;
+    }
+    if(t.hasAttribute("data-sc")){                                   // sample: Convert→EUR
+      setField("convert","id",t.getAttribute("data-sc")); setField("convert","code","EUR");
+      var c = openEp("convert"); if(c) c.scrollIntoView({behavior:"smooth",block:"start"});
+      doSend("convert"); return;
+    }
     if(t.hasAttribute("data-toggle")){
       el("ep_"+t.getAttribute("data-toggle")).classList.toggle("open"); return;
     }
@@ -841,25 +946,7 @@ INIT.api = function(){
         + x.exampleStatus+'</h4>'+codeblock("response.json", x.example, "json")+'</div>';
       wireCopy(); return;
     }
-    if(t.hasAttribute("data-send")){
-      var id = t.getAttribute("data-send"); var bv = vals(id); var req = bv.ep.build(bv.v);
-      var out = el("epout_"+id);
-      out.innerHTML = '<div class="stepbox">'+req.method+' '+escapeHtml(req.url)+' …</div>';
-      var opt = {method:req.method, headers:req.headers};
-      if(req.body) opt.body = req.body;
-      fetch(req.url, opt).then(function(r){
-        return r.text().then(function(txt){
-          var pretty = txt; try{pretty = JSON.stringify(JSON.parse(txt),null,2);}catch(_){}
-          out.innerHTML = '<div class="result-box '+(r.ok?"good":"bad")+'"><h4 class="m0b6">'
-            + 'HTTP '+r.status+'</h4>'+codeblock("response", pretty||"(empty)", "json", true)+'</div>';
-          wireCopy();
-        });
-      }).catch(function(err){
-        out.innerHTML = '<div class="result-box bad"><h4 class="m0b6">Request blocked / failed</h4>'
-          + '<div class="muted mt4">'+escapeHtml(String(err))+' — likely CORS, or the service is '
-          + 'asleep/unreachable. Copy the curl above; it always works.</div></div>';
-      });
-    }
+    if(t.hasAttribute("data-send")){ doSend(t.getAttribute("data-send")); return; }
   });
 };
 
