@@ -85,16 +85,17 @@ public class StorePurchaseService {
     private StoreOutcome storeIdempotent(ValidatedPurchase validated, IdempotencyRequest idem) {
         try {
             return transactor.required(() -> {
-                Optional<StoredResponse> existing = idempotency.find(idem.key());
+                Optional<StoredResponse> existing = idempotency.find(idem.principal(), idem.key());
                 return existing
                         .map(stored -> StoreOutcome.replayed(verifyAndReplay(stored, idem)))
                         .orElseGet(() -> StoreOutcome.created(persistNew(validated, idem)));
             });
         } catch (DuplicateIdempotencyKeyException race) {
-            // A concurrent winner committed our key between our find and our insert; our transaction
-            // rolled back, so no duplicate purchase was created. Read the winner in a fresh transaction
-            // and replay it (or 409 if the winner's payload differs).
-            StoredResponse winner = transactor.requiresNew(() -> idempotency.find(idem.key()))
+            // A concurrent winner committed our (principal, key) between our find and our insert; our
+            // transaction rolled back, so no duplicate purchase was created. Read the winner in a fresh
+            // transaction and replay it (or 409 if the winner's payload differs).
+            StoredResponse winner = transactor.requiresNew(
+                            () -> idempotency.find(idem.principal(), idem.key()))
                     .orElseThrow(() -> race);
             return StoreOutcome.replayed(verifyAndReplay(winner, idem));
         }
@@ -110,17 +111,26 @@ public class StorePurchaseService {
         PurchaseResponse response = PurchaseResponse.from(purchase);
 
         if (idem != null) {
-            idempotency.save(
-                    idem.key(), idem.requestHash(), id, CREATED_STATUS, response, now.plus(idempotencyTtl));
+            idempotency.save(idem.principal(), idem.key(), idem.requestHash(), id, CREATED_STATUS,
+                    now.plus(idempotencyTtl));
         }
         return response;
     }
 
+    /**
+     * Replays a previously-stored idempotent create. The {@code 201} body is <em>re-projected</em> from
+     * the referenced {@code purchases} row (finding #8) — byte-identical to the original, since every
+     * field (including {@code createdAt}) is persisted there — so the idempotency table holds no second
+     * copy of the description (PII). A hash mismatch is a key reuse with a different payload (→ 409).
+     */
     private PurchaseResponse verifyAndReplay(StoredResponse stored, IdempotencyRequest idem) {
         if (!stored.requestHash().equals(idem.requestHash())) {
             throw new IdempotencyConflictException(idem.key());
         }
-        return stored.responseBody();
+        return purchases.findById(stored.purchaseId())
+                .map(PurchaseResponse::from)
+                .orElseThrow(() -> new IllegalStateException(
+                        "idempotency record references a missing purchase: " + stored.purchaseId()));
     }
 
     private void requireStorableCurrency(String currency) {

@@ -12,6 +12,7 @@ import com.wex.fx.AbstractPostgresIT;
 import com.wex.fx.application.port.ExchangeRateProvider;
 import com.wex.fx.domain.rate.ExchangeRate;
 import com.wex.fx.domain.rate.RateSelector;
+import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.retry.Retry;
@@ -70,7 +71,7 @@ class ExchangeRateProviderParityIT extends AbstractPostgresIT {
         wireMock = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         wireMock.start();
         fetcher = new ResilientRateFetcher(
-                new TreasuryRateFetcher(restClient()), retry(), breaker());
+                new TreasuryRateFetcher(restClient()), retry(), breaker(), Bulkhead.ofDefaults("test"));
     }
 
     @AfterEach

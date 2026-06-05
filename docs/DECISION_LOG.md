@@ -256,6 +256,16 @@ resolved-quarter)`; B/C require the `exchange_rates` table (D-10) + a sync/recon
 **provider-parity test** asserts all four return the same rate for a fixture date.
 **Revisit-if.** Scale answer; strict offline-runtime SLA; need for our own audited rate history;
 Treasury rate limits ⇒ make B or C the default.
+
+**Scale-out posture (finding #7).** Provider **A**'s Caffeine cache is **per-instance**, so running >1
+replica multiplies Treasury load (each instance cold-fills its own cache) and yields a cold cache after
+every deploy. The shared store we already have is **Postgres**, not Redis: for any multi-instance
+deployment set **`fx.rates.provider=ingest`** (or **`hybrid`**) so every replica reads the shared
+`exchange_rates` table — no new infrastructure, and upstream load stays bounded regardless of replica
+count. **`ondemand` remains the single-instance default.** The provider-parity test
+(`ExchangeRateProviderParityIT`) pins all four adapters to the same answer, so the switch is safe;
+`render.yaml` documents the `FX_RATES_PROVIDER` env knob. Redis was considered and rejected: it adds an
+operational dependency for a problem the existing database already solves.
 **User decision (2026-06):** **build all four variants** (A0/A/B/C), config-selectable, **default A** —
 a deliberate demonstration of the port/adapter seam and of explicit, configurable trade-offs. To stay
 incrementally shippable on the 5-day clock, implement in order **A0 → A** (shared fetcher + cache
@@ -352,6 +362,20 @@ DB-portable. Stored as native `UUID` (16 bytes), not text.
 purchase insert and key insert commit in **one transaction**; the `UNIQUE` PK on the key + conflict handling
 makes concurrent duplicate retries safe (loser reads & replays the stored response). TTL cleanup ~24–48h.
 **Revisit-if.** A client-supplied-id requirement ⇒ accept + validate the UUID and dedup on it.
+
+**Scoped by caller — UPDATED (finding #6).** The key is unique **per principal**, not globally: the PK is
+`(principal, key)` (V4). The principal is a **gateway-trusted** identity resolved at the web edge from the
+`X-Client-Id` header, defaulting to the sentinel `anonymous` when no auth gateway is present — so behavior
+is byte-identical to the single-tenant world today. The seam matters because, once a gateway authenticates
+multiple clients, a global key would let caller B replay caller A's stored `201` (its id + `description`
+PII) merely by reusing the same key with the same payload. **Gotcha:** the principal header must be
+gateway-trusted — never accept a client-spoofable identity once real auth exists.
+
+**No duplicated PII at rest — UPDATED (finding #8).** `idempotency_keys` no longer stores the `201` body
+(V5 drops `response_body`); it keeps the `purchase_id` FK, `request_hash` (409 detection) and
+`response_status`. On replay the body is **re-projected** from the `purchases` row via
+`PurchaseResponse.from(...)` — byte-identical to the original (every field, including `created_at`, lives
+there), so the `description` (PII) exists only in the ledger, not a second at-rest copy.
 
 ### D-09 — API contract & resource design  `DECIDED`
 **Style.** REST/JSON; URI versioning `/v1`; success `application/json`, errors `application/problem+json`

@@ -181,7 +181,20 @@ class ConversionControllerTest {
 
         mvc.perform(get("/v1/purchases/{id}/conversions/{cc}", ID, "EUR"))
                 .andExpect(status().isServiceUnavailable())
+                // Retry-After is derived from fx.rates.resilience.wait-duration-in-open-state (30s) — #9.
                 .andExpect(header().string(HttpHeaders.RETRY_AFTER, "30"))
                 .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"));
+    }
+
+    @Test
+    void convert_overloaded_returns503_overloaded_withRetryAfter() throws Exception {
+        // Bulkhead saturated (finding #3): same 503 + Retry-After shape, distinct machine code.
+        when(conversions.convert(ID, "EUR"))
+                .thenThrow(new RateProviderUnavailableException(Reason.OVERLOADED, null));
+
+        mvc.perform(get("/v1/purchases/{id}/conversions/{cc}", ID, "EUR"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "30"))
+                .andExpect(jsonPath("$.code").value("UPSTREAM_OVERLOADED"));
     }
 }

@@ -15,6 +15,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.wex.fx.application.error.RateProviderUnavailableException;
 import com.wex.fx.application.error.RateProviderUnavailableException.Reason;
 import com.wex.fx.domain.rate.ExchangeRate;
+import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType;
@@ -160,7 +161,8 @@ class TreasuryRateProviderResilienceIT {
 
     private RateFetcher resilient(Retry retry, CircuitBreaker breaker) {
         counting = new CountingFetcher(new TreasuryRateFetcher(restClient));
-        return new ResilientRateFetcher(counting, retry, breaker);
+        // Generous bulkhead (25 permits) so it never blocks these sequential retry/breaker assertions.
+        return new ResilientRateFetcher(counting, retry, breaker, Bulkhead.ofDefaults("test"));
     }
 
     /** Counts how many times the resilience layer actually invokes the underlying fetcher. */

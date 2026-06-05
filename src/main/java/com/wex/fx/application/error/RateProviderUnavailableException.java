@@ -18,7 +18,9 @@ public final class RateProviderUnavailableException extends RuntimeException {
         /** Upstream did not respond within the read timeout. → {@code 504}. */
         TIMEOUT,
         /** The circuit breaker is open — we are failing fast without calling upstream. → {@code 503}. */
-        CIRCUIT_OPEN
+        CIRCUIT_OPEN,
+        /** The concurrency bulkhead is saturated — too many in-flight upstream calls. → {@code 503}. */
+        OVERLOADED
     }
 
     private final transient Reason reason;

@@ -4,12 +4,21 @@ import com.github.benmanes.caffeine.cache.Ticker;
 import com.wex.fx.application.port.ExchangeRateProvider;
 import com.wex.fx.domain.currency.CurrencyMap;
 import com.wex.fx.domain.rate.RateSelector;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.core.IntervalFunction;
+import io.github.resilience4j.micrometer.tagged.TaggedBulkheadMetrics;
+import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
+import io.github.resilience4j.micrometer.tagged.TaggedRetryMetrics;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryRegistry;
+import io.micrometer.core.instrument.binder.MeterBinder;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -60,8 +69,12 @@ class TreasuryRateProviderConfiguration {
                 .build();
     }
 
+    // Breaker/retry/bulkhead are created from their Resilience4j *registries* (not the bare *.of(...))
+    // so the TaggedXxxMetrics binders below can discover them and publish to /actuator/prometheus
+    // (finding #4). The registry instance carries the same config a direct .of(...) would.
+
     @Bean
-    CircuitBreaker treasuryCircuitBreaker(RatesProperties props) {
+    CircuitBreakerRegistry treasuryCircuitBreakerRegistry(RatesProperties props) {
         RatesProperties.Resilience r = props.resilience();
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .slidingWindowType(SlidingWindowType.COUNT_BASED)
@@ -77,11 +90,16 @@ class TreasuryRateProviderConfiguration {
                 // …a 4xx (our bad request) or a contract violation must not.
                 .ignoreExceptions(HttpClientErrorException.class, TreasuryContractException.class)
                 .build();
-        return CircuitBreaker.of("treasury", config);
+        return CircuitBreakerRegistry.of(config);
     }
 
     @Bean
-    Retry treasuryRetry(RatesProperties props) {
+    CircuitBreaker treasuryCircuitBreaker(CircuitBreakerRegistry registry) {
+        return registry.circuitBreaker("treasury");
+    }
+
+    @Bean
+    RetryRegistry treasuryRetryRegistry(RatesProperties props) {
         RatesProperties.Resilience r = props.resilience();
         RetryConfig config = RetryConfig.custom()
                 .maxAttempts(r.maxAttempts())
@@ -94,7 +112,45 @@ class TreasuryRateProviderConfiguration {
                 // Retry transient upstream failures only — never a 4xx or a malformed body.
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build();
-        return Retry.of("treasury", config);
+        return RetryRegistry.of(config);
+    }
+
+    @Bean
+    Retry treasuryRetry(RetryRegistry registry) {
+        return registry.retry("treasury");
+    }
+
+    @Bean
+    BulkheadRegistry treasuryBulkheadRegistry(RatesProperties props) {
+        RatesProperties.Bulkhead b = props.bulkhead();
+        BulkheadConfig config = BulkheadConfig.custom()
+                .maxConcurrentCalls(b.maxConcurrentCalls())
+                .maxWaitDuration(b.maxWaitDuration())   // 0 = fail fast; saturation surfaces as a clean 503
+                .build();
+        return BulkheadRegistry.of(config);
+    }
+
+    @Bean
+    Bulkhead treasuryBulkhead(BulkheadRegistry registry) {
+        return registry.bulkhead("treasury");
+    }
+
+    /**
+     * Bind the manually-built breaker/retry/bulkhead to Micrometer so {@code /actuator/prometheus}
+     * exposes {@code resilience4j_circuitbreaker_state{name="treasury"}} (+ retry/bulkhead). These
+     * instances live outside the Spring-managed Resilience4j registries the starter's binders watch, so
+     * we register them explicitly. Spring Boot applies every {@link MeterBinder} bean to the registry.
+     */
+    @Bean
+    MeterBinder treasuryResilienceMetrics(
+            CircuitBreakerRegistry circuitBreakerRegistry,
+            RetryRegistry retryRegistry,
+            BulkheadRegistry bulkheadRegistry) {
+        return registry -> {
+            TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(circuitBreakerRegistry).bindTo(registry);
+            TaggedRetryMetrics.ofRetryRegistry(retryRegistry).bindTo(registry);
+            TaggedBulkheadMetrics.ofBulkheadRegistry(bulkheadRegistry).bindTo(registry);
+        };
     }
 
     /** Caffeine wall-clock ticker (overridden in tests to make TTL expiry deterministic). */
@@ -107,10 +163,11 @@ class TreasuryRateProviderConfiguration {
     @Bean
     @ConditionalOnProperty(name = "fx.rates.provider", havingValue = "passthrough")
     ExchangeRateProvider passthroughExchangeRateProvider(
-            RestClient treasuryRestClient, Retry treasuryRetry,
-            CircuitBreaker treasuryCircuitBreaker, RateSelector rateSelector, RatesProperties props) {
+            RestClient treasuryRestClient, Retry treasuryRetry, CircuitBreaker treasuryCircuitBreaker,
+            Bulkhead treasuryBulkhead, RateSelector rateSelector, RatesProperties props) {
         return new PassthroughExchangeRateProvider(
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker,
+                        treasuryBulkhead, props),
                 rateSelector);
     }
 
@@ -119,9 +176,11 @@ class TreasuryRateProviderConfiguration {
     @ConditionalOnProperty(name = "fx.rates.provider", havingValue = "ondemand", matchIfMissing = true)
     ExchangeRateProvider onDemandExchangeRateProvider(
             RestClient treasuryRestClient, Retry treasuryRetry, CircuitBreaker treasuryCircuitBreaker,
-            RateSelector rateSelector, Clock clock, RatesProperties props, Ticker rateCacheTicker) {
+            Bulkhead treasuryBulkhead, RateSelector rateSelector, Clock clock, RatesProperties props,
+            Ticker rateCacheTicker) {
         PassthroughExchangeRateProvider a0 = new PassthroughExchangeRateProvider(
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker,
+                        treasuryBulkhead, props),
                 rateSelector);
         return new CachingExchangeRateProvider(a0, clock, props.cache(), rateCacheTicker);
     }
@@ -138,9 +197,11 @@ class TreasuryRateProviderConfiguration {
     @ConditionalOnProperty(name = "fx.rates.provider", havingValue = "hybrid")
     ExchangeRateProvider hybridExchangeRateProvider(
             ExchangeRateStore store, RestClient treasuryRestClient, Retry treasuryRetry,
-            CircuitBreaker treasuryCircuitBreaker, RateSelector rateSelector, RatesProperties props) {
+            CircuitBreaker treasuryCircuitBreaker, Bulkhead treasuryBulkhead, RateSelector rateSelector,
+            RatesProperties props) {
         return new HybridExchangeRateProvider(store,
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker,
+                        treasuryBulkhead, props),
                 rateSelector);
     }
 
@@ -154,9 +215,11 @@ class TreasuryRateProviderConfiguration {
             "'${fx.rates.provider:ondemand}' == 'ingest' or '${fx.rates.provider:ondemand}' == 'hybrid'")
     RateSyncService rateSyncService(
             RestClient treasuryRestClient, Retry treasuryRetry, CircuitBreaker treasuryCircuitBreaker,
-            ExchangeRateStore store, CurrencyMap currencyMap, Clock clock, RatesProperties props) {
+            Bulkhead treasuryBulkhead, ExchangeRateStore store, CurrencyMap currencyMap, Clock clock,
+            RatesProperties props) {
         return new RateSyncService(
-                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker, props),
+                resilientFetcher(treasuryRestClient, treasuryRetry, treasuryCircuitBreaker,
+                        treasuryBulkhead, props),
                 store, currencyMap, clock, props.sync().windowMonths());
     }
 
@@ -168,9 +231,10 @@ class TreasuryRateProviderConfiguration {
     }
 
     private static RateFetcher resilientFetcher(
-            RestClient client, Retry retry, CircuitBreaker circuitBreaker, RatesProperties props) {
+            RestClient client, Retry retry, CircuitBreaker circuitBreaker, Bulkhead bulkhead,
+            RatesProperties props) {
         return new ResilientRateFetcher(
-                new TreasuryRateFetcher(client, wireDateField(props)), retry, circuitBreaker);
+                new TreasuryRateFetcher(client, wireDateField(props)), retry, circuitBreaker, bulkhead);
     }
 
     /** Treasury column for the active {@link com.wex.fx.domain.rate.RateDateBasis} (D-02). */
