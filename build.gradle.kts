@@ -15,7 +15,7 @@
 // plugin's version (11.7.2) so the handler matches flyway-core exactly.
 buildscript {
     repositories { mavenCentral() }
-    dependencies { classpath("org.flywaydb:flyway-database-postgresql:11.7.2") }
+    dependencies { classpath("org.flywaydb:flyway-database-postgresql:12.8.1") }
 }
 
 plugins {
@@ -24,7 +24,7 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
     jacoco
     id("info.solidsoft.pitest") version "1.19.0"
-    id("org.flywaydb.flyway") version "11.7.2"  // matches Boot 3.5.14's managed Flyway
+    id("org.flywaydb.flyway") version "12.8.1"  // matches Boot 3.5.14's managed Flyway
     // CycloneDX SBOM (finding #2): `./gradlew cyclonedxBom` → build/reports/bom.json, which the nightly
     // Trivy job scans so the CVE scan enumerates REAL Java deps. Not wired into `check` — PR gate stays fast.
     id("org.cyclonedx.bom") version "1.10.0"
