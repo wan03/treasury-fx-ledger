@@ -4,30 +4,21 @@
 > into a target currency using the official **U.S. Treasury _Reporting Rates of Exchange_** API.
 > **Java 21 · Spring Boot 3.5 · PostgreSQL · hexagonal architecture.**
 
-<table>
-<tr>
-<td width="50%">
+### ▶ Try it live — **[currency-ledger.onrender.com](https://currency-ledger.onrender.com)**
 
-### ▶ Explore interactively
-**The app's home page _is_ an interactive explorer** — run `make dev` and open
-**[`http://localhost:8080/`](http://localhost:8080/)**. One page lets you switch between
-the **Codebase** and the **Live App**: an architecture map, a browsable decision log, a code tour, and a
-**live rate-selection playground** where you drag a purchase date and watch the Treasury rate get chosen.
-Served by the app, its **Live App** tab calls the real API **same-origin** (no CORS).
-_(Source: [`explore.html`](src/main/resources/static/explore.html) + its same-origin siblings
-`explore.css` / `explore.js` — static, no build step; also opens standalone from disk, no install.)_
+**The home page _is_ the app — an interactive explorer, nothing to install.** One page switches between the
+**Codebase** (an architecture map, a browsable decision log, a code tour, and a **live rate-selection
+playground** where you drag a purchase date and watch the Treasury rate get chosen) and the **Live App**
+(an API playground that drives the real service same-origin — `POST /v1/purchases` →
+`GET …/conversions/EUR`, live). Just open the link and explore.
 
-</td>
-<td width="50%">
+> **Prefer to run it yourself?** → **[Run it locally](#run-it-locally)** (one command).
+>
+> **Honest cold-start note:** the free hosting tier sleeps after ~15 min idle, so the first request after a
+> pause takes ~1 min while the instance wakes — a free-tier trait, not an app warm-up cost.
 
-### 🌐 Live demo
-**`_<set after deploy — see [Deployment](#deployment)>_`**
-The deployed root serves the explorer; its **Live App** tab drives the real API live. Swagger UI at
-`/swagger-ui.html` (dev) and a raw `POST /v1/purchases` → `GET …/conversions/EUR` also work.
-
-</td>
-</tr>
-</table>
+_(The explorer is static — [`explore.html`](src/main/resources/static/explore.html) + its same-origin
+siblings `explore.css` / `explore.js`, no build step — and also opens standalone from disk.)_
 
 ---
 
@@ -60,7 +51,7 @@ resilience, security, and the test strategy.
 
 | If you want to… | Read this section | …or go straight to the source |
 |---|---|---|
-| See it run in 30 seconds | [Quickstart](#quickstart) | [`Makefile`](Makefile) |
+| Run it on your machine | [Run it locally](#run-it-locally) | [`Makefile`](Makefile) |
 | Understand the shape of the system | [Architecture](#architecture) | [`docs/builder/plan.md`](docs/builder/plan.md) |
 | Judge the money handling | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`Money.java`](src/main/java/com/wex/fx/domain/money/Money.java) |
 | Inspect the **rate-selection rule** (the crux) | [Architecture](#architecture) | [`RateSelector.java`](src/main/java/com/wex/fx/domain/rate/RateSelector.java) · [`rate-selection.md`](docs/builder/rate-selection.md) |
@@ -70,46 +61,37 @@ resilience, security, and the test strategy.
 | See the resilience story | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`ResilientRateFetcher.java`](src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java) |
 | Read **why** any decision was made | — | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) (ADRs `D-01…D-13`, Treasury facts `F1…F9`) |
 | Know what I assumed & would ask | [Assumptions](#assumptions-committed-defaults--overridable-if-the-brief-intends-otherwise) | [`HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md) |
-| Deploy it | [Deployment](#deployment) | [`render.yaml`](render.yaml) · [`Dockerfile`](Dockerfile) |
 
-> **Two lenses on the same work:** this README is the *narrative*; the **app's home page**
-> ([`http://localhost:8080/`](http://localhost:8080/), source
+> **Two lenses on the same work:** this README is the *narrative*; the **live app's home page**
+> ([currency-ledger.onrender.com](https://currency-ledger.onrender.com), source
 > [`explore.html`](src/main/resources/static/explore.html)) is the *interactive* version (and it links
 > back here). Use whichever suits you.
 
 ---
 
-## Quickstart
+## Run it locally
 
-**Prerequisites:** JDK 21 (Gradle auto-provisions a toolchain if missing) and a container runtime.
-The Gradle wrapper is committed; nothing else to install.
+> The live app above needs nothing installed. This section is **only** if you'd rather run it yourself.
+
+**Prerequisites:** JDK 21 (Gradle auto-provisions a toolchain if missing) and a container runtime
+(Docker Desktop, or rootless Podman with a compose provider). The Gradle wrapper is committed — nothing else.
 
 ```bash
 make dev        # starts Postgres (docker-compose), applies migrations, runs the app on :8080
 ```
 
-Then open **http://localhost:8080/** for the interactive explorer (the recommended way in), or
-**http://localhost:8080/swagger-ui.html** for raw Swagger — or drive it from the shell:
+Open **http://localhost:8080/** for the explorer or **/swagger-ui.html** for raw Swagger (dev only) — or
+drive it from the shell:
 
 ```bash
 # R1 — store a purchase (UUIDv7 returned in the body + Location header)
 curl -sS -X POST http://localhost:8080/v1/purchases \
   -H 'Content-Type: application/json' \
   -d '{"description":"Office supplies","transactionDate":"2025-04-15","amount":"100.00"}'
-# → 201 Created · {"id":"019e93ff-…","amount":"100.00","currency":"USD","createdAt":"…Z", …}
 
 # R2 — convert it to EUR (money & rate are JSON STRINGS)
 curl -sS http://localhost:8080/v1/purchases/<id>/conversions/EUR
-# → 200 OK · {"originalAmount":"100.00","exchangeRate":"0.924","rateEffectiveDate":"2025-03-31",
-#             "convertedAmount":"92.40","rateSource":"U.S. Treasury Reporting Rates of Exchange", …}
 ```
-
-> **Container runtime, precisely:** `make dev` uses Spring Boot's Docker Compose support, which shells out
-> to a **Compose CLI** — **Docker Desktop / `docker compose` bundles it out of the box.** On rootless
-> **Podman**, install a compose provider (`podman compose`) so `make dev` can auto-start the DB. The
-> **test/integration** targets are lighter — they need only the container **API socket** (Testcontainers
-> talks to it directly), which a bare rootless Podman already exposes (`make podman-up`). _Verified
-> end-to-end on both paths._
 
 ### Make targets
 
@@ -239,28 +221,6 @@ and fill in. Profiles: `dev` (local compose) · `test` · `prod`.
 
 All rate tunables (the 6-month window, timeouts, retry/breaker thresholds, cache TTLs) are bound config,
 not magic numbers — see `fx.rates.*` in [`application.yml`](src/main/resources/application.yml).
-
----
-
-## Deployment
-
-Infra-as-code via [`render.yaml`](render.yaml) (Render Blueprint) + a multi-stage
-[`Dockerfile`](Dockerfile) (build a layered jar → run on a slim JRE as non-root). **Compute = Render**
-(free Docker web service); **database = Neon** (external managed Postgres — decoupled so it survives
-Render free-tier's Postgres deletion).
-
-1. **Neon:** create a project + database; create the two least-privilege roles (`migration` for DDL,
-   `app` for DML) per [`db/init`](db/init). Grab the two connection strings.
-2. **Render:** _New → Blueprint_, point at this repo. `render.yaml` provisions the web service; set the
-   five DB secrets (`DATABASE_*`, `DB_MIGRATION_*`) and `SPRING_PROFILES_ACTIVE=prod` in the dashboard
-   (they're `sync: false` — never committed).
-3. Render builds the Dockerfile, Flyway migrates on boot, and the health check at `/actuator/health`
-   gates the rollout. Open the live root `/` for the explorer (its **Live App** tab auto-targets the
-   deployed origin same-origin), verify a `POST → GET …/conversions/EUR` round-trip, then paste the
-   HTTPS URL into the [Live demo](#-live-demo) line above.
-
-> **Cold-start caveat (honest):** the free Render instance spins down after ~15 min idle, so the first
-> request after a pause takes ~1 minute while it wakes. This is a free-tier trait, not an app warm-up cost.
 
 ---
 
