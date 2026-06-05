@@ -70,7 +70,7 @@ dependencies {
 
     // --- server-generated, time-ordered ids (UUIDv7, RFC 9562; D-08). Java 21 has no
     //     native UUIDv7, so use FasterXML's generator behind an IdGenerator port. ---
-    implementation("com.fasterxml.uuid:java-uuid-generator:5.1.0")
+    implementation("com.fasterxml.uuid:java-uuid-generator:5.2.0")
 
     // --- migrations (Postgres) ---
     implementation("org.flywaydb:flyway-core")
