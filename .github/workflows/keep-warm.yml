@@ -1,15 +1,21 @@
 name: keep-warm
 
-# Pings the Render free-tier health endpoint so the instance stays warm during
-# business hours and we avoid the ~1-min cold start. See render.yaml (plan: free,
-# spins down after 15 min idle).
+# Manual "warm it now" fallback for the Render free-tier instance (spins down after
+# ~15 min idle, ~1-min cold start; see render.yaml).
+#
+# The PRIMARY keep-warm is an EXTERNAL uptime pinger (e.g. cron-job.org / UptimeRobot)
+# hitting the health endpoint on a schedule — far more reliable than GitHub's `schedule`
+# trigger, which is best-effort, heavily throttled, and in practice never fired here.
+# Recommended pinger config (windowed, to stay under Render's 750 instance-hrs/month cap):
+#   • URL      : https://currency-ledger.onrender.com/actuator/health
+#   • method   : GET, expect HTTP 200
+#   • schedule : */10 13-23 * * 1-5   (every 10 min, 13:00-23:00 UTC, Mon-Fri)
+# See the README "Keeping the demo warm" section.
+#
+# This workflow is therefore manual-dispatch ONLY — a one-click button to warm the
+# instance on demand (e.g. right before a demo). The unreliable GitHub cron was removed.
 on:
-  schedule:
-    # NOTE: GitHub cron is UTC. 13:00-23:00 UTC on weekdays ~ 06:00-16:00
-    # America/Los_Angeles (Render's region is oregon). Adjust the hour range to
-    # taste. Every 10 min keeps us under Render's 15-min idle spin-down.
-    - cron: "*/10 13-23 * * 1-5"
-  workflow_dispatch: # manual "Run workflow" button for testing
+  workflow_dispatch: # Actions tab → keep-warm → "Run workflow"
 
 permissions: {} # no repo access needed — we only make an outbound request
 
