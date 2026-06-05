@@ -27,11 +27,12 @@ plugins {
     id("org.flywaydb.flyway") version "12.8.1"  // matches Boot 3.5.14's managed Flyway
     // CycloneDX SBOM (finding #2): `./gradlew cyclonedxBom` → build/reports/bom.json, which the nightly
     // Trivy job scans so the CVE scan enumerates REAL Java deps. Not wired into `check` — PR gate stays fast.
-    id("org.cyclonedx.bom") version "1.10.0"
+    // v2.x required: 1.x throws UnsupportedOperationException under Gradle 9 (the wrapper is on 9.5.1).
+    id("org.cyclonedx.bom") version "2.3.1"
 }
 
 group = "com.wex"
-version = "0.0.1-SNAPSHOT"
+version = "1.0.0"
 description = "USD purchase ledger with on-demand Treasury currency conversion"
 
 java {
