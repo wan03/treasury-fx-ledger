@@ -82,8 +82,11 @@ CREATE INDEX idx_rates_desc_eff ON exchange_rates (country_currency_desc, effect
 ## Migrations (Flyway)
 
 - `V1__purchases.sql`, `V2__idempotency_keys.sql`, (optional) `V3__exchange_rates.sql`.
-- Versioned and immutable once shipped; repeatable migration `R__seed_dev.sql` for dev seed data only
-  (guarded so it never runs in prod).
+- Versioned and immutable once shipped. Demo seed data lives in a **separate location**
+  (`classpath:db/seed/R__seed_demo_purchases.sql`, a repeatable migration) that is layered onto the
+  `flyway.locations` of **`dev` and `prod` only** — never `test`, so the deterministic suite always
+  starts from an empty ledger. (The prod deployment is a public demo; an empty ledger reads as broken,
+  so we seed it on purpose. The seed is idempotent — `ON CONFLICT (id) DO NOTHING` — and append-only.)
 - Migrations run identically on app startup, in Testcontainers, and in prod (parity).
 - Run as the `migration` role; the app connects as the `app` role.
 

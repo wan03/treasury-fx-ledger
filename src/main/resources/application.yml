@@ -148,6 +148,8 @@ spring:
     url: jdbc:postgresql://localhost:5432/currency_ledger
     user: ${DB_MIGRATION_USERNAME:migration}
     password: ${DB_MIGRATION_PASSWORD:change-me-migration}
+    # Demo seed (db/seed) is layered on for dev/prod only — never for `test`.
+    locations: classpath:db/migration,classpath:db/seed
 logging:
   level:
     com.wex.fx: DEBUG
@@ -184,6 +186,8 @@ spring:
     url: ${DATABASE_URL}
     user: ${DB_MIGRATION_USERNAME}
     password: ${DB_MIGRATION_PASSWORD}
+    # The running deployment is a public demo — layer the seed data (db/seed) in.
+    locations: classpath:db/migration,classpath:db/seed
 server:
   error:
     include-message: never
