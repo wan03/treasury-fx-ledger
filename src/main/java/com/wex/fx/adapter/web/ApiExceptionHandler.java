@@ -8,13 +8,18 @@ import com.wex.fx.application.error.PurchaseNotFoundException;
 import com.wex.fx.application.error.RateProviderUnavailableException;
 import com.wex.fx.application.error.UnsupportedCurrencyException;
 import com.wex.fx.domain.validation.ValidationException;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -57,8 +62,23 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
     private static final String TYPE_BASE = "https://api.example.com/problems/";
-    /** Mirrors the breaker's open-state wait (application.yml) so a 503 advertises an honest backoff. */
-    private static final String RETRY_AFTER_SECONDS = "30";
+
+    /**
+     * The advertised {@code Retry-After} for a 503, derived from the breaker's open-state wait
+     * ({@code fx.rates.resilience.wait-duration-in-open-state}) so retuning the breaker can never let the
+     * advertised backoff silently drift (finding #9). Floored at 1s so we never advertise {@code 0}.
+     */
+    private final String retryAfterSeconds;
+    // ObjectProvider, not a hard Tracer dependency: tracing autoconfig isn't present in @WebMvcTest
+    // slices, so an absent Tracer must degrade to the random-id fallback rather than fail the context.
+    private final ObjectProvider<Tracer> tracerProvider;
+
+    ApiExceptionHandler(
+            ObjectProvider<Tracer> tracerProvider,
+            @Value("${fx.rates.resilience.wait-duration-in-open-state}") Duration openStateWait) {
+        this.tracerProvider = tracerProvider;
+        this.retryAfterSeconds = Long.toString(Math.max(1L, openStateWait.toSeconds()));
+    }
 
     // --- domain / application exceptions ---------------------------------------------------------
 
@@ -130,14 +150,17 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             case UPSTREAM_ERROR -> new UpstreamMapping(HttpStatus.BAD_GATEWAY, "UPSTREAM_BAD_GATEWAY");
             case TIMEOUT -> new UpstreamMapping(HttpStatus.GATEWAY_TIMEOUT, "UPSTREAM_TIMEOUT");
             case CIRCUIT_OPEN -> new UpstreamMapping(HttpStatus.SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE");
+            // Bulkhead saturated — same 503 + Retry-After shape, distinct machine code.
+            case OVERLOADED -> new UpstreamMapping(HttpStatus.SERVICE_UNAVAILABLE, "UPSTREAM_OVERLOADED");
         };
         ProblemDetail pd = problem(m.status(), m.code(), "Exchange-rate provider unavailable",
                 "The exchange-rate provider is temporarily unavailable. Please retry later.", req, ex);
         ResponseEntity.BodyBuilder builder = ResponseEntity.status(m.status())
                 .contentType(MediaType.APPLICATION_PROBLEM_JSON);
         if (m.status() == HttpStatus.SERVICE_UNAVAILABLE) {
-            // Circuit open: tell the caller roughly when to come back (matches the open-state window).
-            builder.header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS);
+            // Circuit open / overloaded: tell the caller roughly when to come back (matches the
+            // open-state window, derived from config so it tracks any retune).
+            builder.header(HttpHeaders.RETRY_AFTER, retryAfterSeconds);
         }
         return builder.body(pd);
     }
@@ -169,7 +192,7 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
         if (response != null && response.getBody() instanceof ProblemDetail pd) {
             String code = frameworkCode(statusCode);
-            String traceId = newTraceId();
+            String traceId = traceId();
             pd.setProperty("code", code);
             pd.setProperty("traceId", traceId);
             if (pd.getType() == null || "about:blank".equals(String.valueOf(pd.getType()))) {
@@ -187,7 +210,7 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private ProblemDetail problem(HttpStatus status, String code, String title, String detail,
             HttpServletRequest req, Exception ex) {
-        String traceId = newTraceId();
+        String traceId = traceId();
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(status, detail);
         pd.setTitle(title);
         pd.setType(URI.create(TYPE_BASE + slug(code)));
@@ -221,7 +244,20 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return code.toLowerCase(Locale.ROOT).replace('_', '-');
     }
 
-    private static String newTraceId() {
+    /**
+     * The {@code traceId} carried by the problem body and the audit log: the active trace id when there
+     * is a span (so it correlates the error to all of that request's logs — and to an inbound {@code
+     * traceparent} that was continued), falling back to a random id when tracing yields no span.
+     */
+    private String traceId() {
+        Tracer tracer = tracerProvider.getIfAvailable();
+        Span span = tracer != null ? tracer.currentSpan() : null;
+        if (span != null) {
+            String tid = span.context().traceId();
+            if (tid != null && !tid.isBlank()) {
+                return tid;
+            }
+        }
         return UUID.randomUUID().toString();
     }
 

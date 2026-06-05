@@ -25,6 +25,9 @@ plugins {
     jacoco
     id("info.solidsoft.pitest") version "1.19.0"
     id("org.flywaydb.flyway") version "11.7.2"  // matches Boot 3.5.14's managed Flyway
+    // CycloneDX SBOM (finding #2): `./gradlew cyclonedxBom` → build/reports/bom.json, which the nightly
+    // Trivy job scans so the CVE scan enumerates REAL Java deps. Not wired into `check` — PR gate stays fast.
+    id("org.cyclonedx.bom") version "1.10.0"
 }
 
 group = "com.wex"
@@ -80,6 +83,13 @@ dependencies {
     // --- rate provider A cache + Treasury resilience (D-03 / constitution §7) ---
     implementation("com.github.ben-manes.caffeine:caffeine") // version via Boot BOM
     implementation("io.github.resilience4j:resilience4j-spring-boot3:$resilience4jVersion")
+    // Resilience4j↔Micrometer binders (finding #4): publish breaker/retry/bulkhead meters. Pinned
+    // explicitly so the TaggedXxxMetrics types are on OUR compile classpath, not just transitively.
+    implementation("io.github.resilience4j:resilience4j-micrometer:$resilience4jVersion")
+
+    // --- observability: Prometheus scrape (#4) + W3C tracing/correlation (#5), versions via Boot BOM ---
+    implementation("io.micrometer:micrometer-registry-prometheus")
+    implementation("io.micrometer:micrometer-tracing-bridge-otel")
 
     // --- OpenAPI: serve the authored contract via Swagger UI (D-09) ---
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:$springdocVersion")
@@ -149,6 +159,15 @@ dependencies {
 // --- only the executable boot jar (no -plain.jar) ---------------------------
 tasks.named<Jar>("jar") {
     enabled = false
+}
+
+// The CycloneDX plugin links `cyclonedxBom` into `processResources` (to embed the SBOM in the jar),
+// which would pull SBOM generation into the fast PR gate. Keep SCA strictly nightly (finding #2):
+// make the task a no-op UNLESS it is explicitly on the command line, so it stays in the graph but
+// does zero work during `check`/`test`/`bootJar` — only `./gradlew cyclonedxBom` (the nightly job)
+// actually generates build/reports/application.cdx.json.
+tasks.named("cyclonedxBom") {
+    onlyIf { gradle.startParameter.taskNames.any { it.substringAfterLast(":") == "cyclonedxBom" } }
 }
 
 // --- JaCoCo: a floor/guardrail, NOT the quality target (mutation is) --------

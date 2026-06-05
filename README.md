@@ -151,6 +151,10 @@ One port, **four config-selectable adapters**, chosen by `fx.rates.provider`:
 A0/A share one HTTP fetcher (A is a **cache decorator** over it); B/C share the table. Shipping the port
 seam means the acquisition strategy is a config flag, not a rewrite. _(See [`plan.md`](docs/builder/plan.md).)_
 
+> **Scaling out (>1 instance):** A's cache is **per-instance**, so multiple replicas multiply Treasury
+> load. Set `FX_RATES_PROVIDER=ingest` (or `hybrid`) so every replica reads the shared `exchange_rates`
+> table (the database is the shared store — no Redis). `ondemand` stays the single-instance default. _(D-03)_
+
 ---
 
 ## The engineering signal (where the care went)

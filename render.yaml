@@ -28,3 +28,12 @@ services:
         sync: false
       - key: DB_POOL_SIZE
         value: "5"                  # modest pool for the free instance
+    # --- Neon provisioning notes (out of band; not Render config) ---
+    # 1) Durable session guards: run once against Neon as the role owner so they survive PgBouncer
+    #    pooling (finding #1 — mirrors db/init/00-roles.sql for dev/test):
+    #      ALTER ROLE app SET statement_timeout = '3s';
+    #      ALTER ROLE app SET lock_timeout = '2s';
+    #      ALTER ROLE app SET idle_in_transaction_session_timeout = '10s';
+    # 2) Scale-out (finding #7): the default `ondemand` provider caches per instance, so >1 replica
+    #    multiplies Treasury load. For multi-instance, set FX_RATES_PROVIDER=ingest (or hybrid) so all
+    #    replicas read the shared exchange_rates table (DB is the shared store; no Redis). See D-03.

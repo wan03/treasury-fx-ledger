@@ -2,7 +2,6 @@ package com.wex.fx.adapter.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.wex.fx.application.dto.PurchaseResponse;
 import com.wex.fx.application.port.IdempotencyStore;
 import java.time.Clock;
 import java.time.Instant;
@@ -64,13 +63,13 @@ class IdempotencySweeperTest {
         }
 
         @Override
-        public Optional<StoredResponse> find(String key) {
+        public Optional<StoredResponse> find(String principal, String key) {
             return Optional.empty();
         }
 
         @Override
-        public void save(String key, String requestHash, UUID purchaseId, int responseStatus,
-                PurchaseResponse responseBody, Instant expiresAt) {
+        public void save(String principal, String key, String requestHash, UUID purchaseId,
+                int responseStatus, Instant expiresAt) {
             throw new UnsupportedOperationException();
         }
     }

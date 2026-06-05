@@ -3,6 +3,8 @@ package com.wex.fx.adapter.treasury;
 import com.wex.fx.application.error.RateProviderUnavailableException;
 import com.wex.fx.application.error.RateProviderUnavailableException.Reason;
 import com.wex.fx.domain.rate.ExchangeRate;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.retry.Retry;
@@ -23,24 +25,32 @@ import org.springframework.web.client.ResourceAccessException;
  * the adapter:
  *
  * <ul>
+ *   <li>bulkhead full → fail fast, {@link Reason#OVERLOADED} (→ {@code 503});</li>
  *   <li>circuit open → fail fast, {@link Reason#CIRCUIT_OPEN} (→ {@code 503});</li>
  *   <li>read timeout → {@link Reason#TIMEOUT} (→ {@code 504});</li>
  *   <li>5xx / 4xx / malformed body → {@link Reason#UPSTREAM_ERROR} (→ {@code 502}).</li>
  * </ul>
  *
- * Retry/breaker policy (which exceptions are transient, which trip the breaker) is configured where the
- * {@code Retry}/{@code CircuitBreaker} are built — {@code RateProviderConfig}.
+ * <p>Composition is {@code Bulkhead(Retry(CircuitBreaker(call)))}: the semaphore {@link Bulkhead}
+ * bounds total in-flight upstream calls <em>outside</em> retry/breaker, so a burst of distinct-key
+ * cache misses on virtual threads cannot open an unbounded number of simultaneous connections — excess
+ * callers fail fast as {@code OVERLOADED} rather than pile onto the dependency.
+ *
+ * <p>Retry/breaker/bulkhead policy (which exceptions are transient, which trip the breaker, the
+ * concurrency limit) is configured where those objects are built — {@code TreasuryRateProviderConfiguration}.
  */
 final class ResilientRateFetcher implements RateFetcher {
 
     private final RateFetcher delegate;
     private final Retry retry;
     private final CircuitBreaker circuitBreaker;
+    private final Bulkhead bulkhead;
 
-    ResilientRateFetcher(RateFetcher delegate, Retry retry, CircuitBreaker circuitBreaker) {
+    ResilientRateFetcher(RateFetcher delegate, Retry retry, CircuitBreaker circuitBreaker, Bulkhead bulkhead) {
         this.delegate = delegate;
         this.retry = retry;
         this.circuitBreaker = circuitBreaker;
+        this.bulkhead = bulkhead;
     }
 
     @Override
@@ -56,12 +66,14 @@ final class ResilientRateFetcher implements RateFetcher {
         return guarded(() -> delegate.fetchWindow(descriptor, from, to));
     }
 
-    /** Apply the retry-over-breaker composition and collapse every failure into one domain signal. */
+    /** Apply the bulkhead-over-retry-over-breaker composition and collapse every failure into one signal. */
     private List<ExchangeRate> guarded(Supplier<List<ExchangeRate>> call) {
-        Supplier<List<ExchangeRate>> guarded =
-                Retry.decorateSupplier(retry, CircuitBreaker.decorateSupplier(circuitBreaker, call));
+        Supplier<List<ExchangeRate>> guarded = Bulkhead.decorateSupplier(bulkhead,
+                Retry.decorateSupplier(retry, CircuitBreaker.decorateSupplier(circuitBreaker, call)));
         try {
             return guarded.get();
+        } catch (BulkheadFullException e) {
+            throw new RateProviderUnavailableException(Reason.OVERLOADED, e);
         } catch (CallNotPermittedException e) {
             throw new RateProviderUnavailableException(Reason.CIRCUIT_OPEN, e);
         } catch (ResourceAccessException e) {

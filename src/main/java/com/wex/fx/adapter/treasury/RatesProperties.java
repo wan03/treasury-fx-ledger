@@ -27,6 +27,7 @@ public record RatesProperties(
         @DefaultValue("effective_date") RateDateBasis rateDateBasis,
         @DefaultValue Cache cache,
         @DefaultValue Resilience resilience,
+        @DefaultValue Bulkhead bulkhead,
         @DefaultValue Sync sync) {
 
     /**
@@ -74,6 +75,20 @@ public record RatesProperties(
             @DefaultValue("50") float failureRateThreshold,
             @DefaultValue("30s") Duration waitDurationInOpenState,
             @DefaultValue("3") int permittedCallsInHalfOpenState) {}
+
+    /**
+     * Concurrency bulkhead around the Treasury fetcher (finding #3). A semaphore caps the number of
+     * <em>simultaneous</em> in-flight upstream calls so a burst of distinct-key cache misses on virtual
+     * threads can't open an unbounded number of connections; the excess fails fast as a {@code 503
+     * UPSTREAM_OVERLOADED} (with {@code Retry-After}) rather than piling onto the dependency.
+     *
+     * @param maxConcurrentCalls the permit count — the most in-flight upstream calls allowed at once.
+     * @param maxWaitDuration    how long a caller waits for a permit before failing fast ({@code 0} =
+     *                           fail immediately; the default, so saturation surfaces as a clean 503).
+     */
+    public record Bulkhead(
+            @DefaultValue("16") int maxConcurrentCalls,
+            @DefaultValue("0ms") Duration maxWaitDuration) {}
 
     /**
      * Ingest/sync knobs for providers B/C. {@code windowMonths} bounds how far back the backfill pulls

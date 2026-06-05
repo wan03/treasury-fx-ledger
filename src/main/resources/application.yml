@@ -35,7 +35,11 @@ spring:
   # Hikari tuning + Postgres session guards on the APP datasource only (NOT Flyway — its
   # `spring.flyway.*` connection is separate, so migrations can legitimately run long). A stuck
   # statement or a lock wait must never pin a pooled connection until the 30s default and cascade
-  # into pool exhaustion. `connection-init-sql` runs once per physical connection (resiliency #2):
+  # into pool exhaustion.
+  # PRIMARY guard: role-level defaults (`ALTER ROLE app SET statement_timeout=3s` …) in
+  # db/init/00-roles.sql — these survive PgBouncer transaction pooling (Neon -pooler), where the
+  # connection-init-sql below would NOT. `connection-init-sql` is kept as belt-and-braces for the
+  # direct (non-pooled) endpoint, so the same statement/lock/idle timeouts hold either way:
   #   • statement_timeout 3s — every app query is a sub-ms PK op, so 3s is generous headroom;
   #   • lock_timeout 2s      — fail fast rather than queue behind a held row lock;
   #   • idle_in_transaction 10s — reap a connection abandoned mid-transaction.
@@ -112,6 +116,13 @@ fx:
       failure-rate-threshold: 50
       wait-duration-in-open-state: 30s
       permitted-calls-in-half-open-state: 3
+    # Concurrency bulkhead (finding #3): cap simultaneous in-flight Treasury calls so a burst of
+    # distinct-key cache misses on virtual threads can't open unbounded connections. Beyond the limit,
+    # callers fail fast (max-wait 0) as 503 UPSTREAM_OVERLOADED + Retry-After. Identical-key calls still
+    # collapse via the cache and never reach the bulkhead.
+    bulkhead:
+      max-concurrent-calls: 16
+      max-wait-duration: 0ms
     # Providers B (ingest) / C (hybrid) only: the out-of-band sync that backfills/reconciles the local
     # exchange_rates table. window-months bounds how far back to ingest; interval is the reconcile cadence
     # (catches current-quarter amendments). Inert under A0/A.
@@ -123,11 +134,11 @@ management:
   endpoints:
     web:
       exposure:
-        # Only `health` is exposed — liveness/readiness probes and the platform health
-        # check (Render `healthCheckPath: /actuator/health`, the explorer's health widget)
-        # need nothing else. `/info` carried no value and is dropped to shrink the surface
-        # (constitution §9). `GET /actuator/info` therefore returns 404.
-        include: health
+        # `health` + `prometheus` (finding #4). Render's health check uses /actuator/health on the
+        # MAIN port; /actuator/prometheus is on the same port and MUST be gateway-restricted in prod
+        # (a separate management port would break Render's single-port health check). /info stays
+        # unexposed → 404 (constitution §9).
+        include: health,prometheus
   endpoint:
     health:
       probes:
@@ -138,6 +149,15 @@ management:
       enabled: true
     readinessstate:
       enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}   # tag every meter so scrapes are attributable
+  # Distributed tracing (finding #5): honor inbound W3C traceparent, put trace/span ids in MDC so
+  # every log line for a request shares one trace id, and let ApiExceptionHandler use the active trace
+  # id as the problem `traceId`. No exporter on the classpath → spans are recorded, not shipped.
+  tracing:
+    sampling:
+      probability: 1.0
 
 # springdoc: serve our AUTHORED contract (src/main/resources/static/openapi.yaml)
 # in Swagger UI — design-first, not code-generated (api-contract.md).

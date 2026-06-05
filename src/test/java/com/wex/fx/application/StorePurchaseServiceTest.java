@@ -15,6 +15,8 @@ import com.wex.fx.application.support.DirectTransactor;
 import com.wex.fx.application.support.FixedIdGenerator;
 import com.wex.fx.application.support.InMemoryIdempotencyStore;
 import com.wex.fx.application.support.InMemoryPurchaseRepository;
+import com.wex.fx.domain.money.Money;
+import com.wex.fx.domain.purchase.Purchase;
 import com.wex.fx.domain.validation.PurchaseValidator;
 import com.wex.fx.domain.validation.ValidationException;
 import java.math.BigDecimal;
@@ -70,13 +72,14 @@ class StorePurchaseServiceTest {
     @Test
     void same_key_same_payload_replays_the_stored_response_without_a_second_insert() {
         StorePurchaseService service = serviceWith(new InMemoryIdempotencyStore());
-        IdempotencyRequest idem = new IdempotencyRequest("key-1", "hash-abc");
+        IdempotencyRequest idem = new IdempotencyRequest("anonymous", "key-1", "hash-abc");
 
         StoreOutcome first = service.store(command(null), idem);
         StoreOutcome second = service.store(command(null), idem);
 
         assertThat(first.replayed()).isFalse();
         assertThat(second.replayed()).isTrue();
+        // Replay is re-projected from the persisted purchase (finding #8) — byte-identical to the first.
         assertThat(second.response()).isEqualTo(first.response());
         assertThat(purchases.stored).hasSize(1);                     // not inserted twice
     }
@@ -84,11 +87,27 @@ class StorePurchaseServiceTest {
     @Test
     void same_key_different_payload_is_a_conflict() {
         StorePurchaseService service = serviceWith(new InMemoryIdempotencyStore());
-        service.store(command(null), new IdempotencyRequest("key-1", "hash-abc"));
+        service.store(command(null), new IdempotencyRequest("anonymous", "key-1", "hash-abc"));
 
-        assertThatThrownBy(() ->
-                        service.store(command(null), new IdempotencyRequest("key-1", "hash-DIFFERENT")))
+        assertThatThrownBy(() -> service.store(command(null),
+                        new IdempotencyRequest("anonymous", "key-1", "hash-DIFFERENT")))
                 .isInstanceOf(IdempotencyConflictException.class);
+    }
+
+    @Test
+    void same_key_from_two_principals_does_not_cross_replay() {
+        // Distinct ids per create so two real purchases are distinguishable (finding #6).
+        StorePurchaseService service = new StorePurchaseService(
+                validator, purchases, new InMemoryIdempotencyStore(), UUID::randomUUID,
+                new DirectTransactor(), FIXED, TTL);
+
+        StoreOutcome alice = service.store(command(null), new IdempotencyRequest("alice", "key-1", "hash-abc"));
+        StoreOutcome bob = service.store(command(null), new IdempotencyRequest("bob", "key-1", "hash-abc"));
+
+        assertThat(alice.replayed()).isFalse();
+        assertThat(bob.replayed()).isFalse();                        // bob's key-1 is independent of alice's
+        assertThat(alice.response().id()).isNotEqualTo(bob.response().id());
+        assertThat(purchases.stored).hasSize(2);                     // two real purchases, no cross-replay
     }
 
     @Test
@@ -106,32 +125,34 @@ class StorePurchaseServiceTest {
 
     @Test
     void a_concurrent_duplicate_key_is_resolved_by_replaying_the_winner() {
-        PurchaseResponse winnerBody = new PurchaseResponse(
-                UUID.fromString("0190a000-0000-7000-8000-0000000000ff"),
-                "Office supplies", LocalDate.parse("2026-03-15"),
-                new BigDecimal("12.34"), "USD", Instant.parse("2026-06-03T12:00:00Z"));
+        // The winner's purchase is already persisted (its tx committed); replay re-projects from it.
+        UUID winnerId = UUID.fromString("0190a000-0000-7000-8000-0000000000ff");
+        Purchase winner = persistPurchase(winnerId, "Office supplies", "12.34");
         RacingIdempotencyStore racing =
-                new RacingIdempotencyStore(new IdempotencyStore.StoredResponse("hash-abc", 201, winnerBody));
+                new RacingIdempotencyStore(new IdempotencyStore.StoredResponse("hash-abc", 201, winnerId));
 
-        StoreOutcome outcome =
-                serviceWith(racing).store(command(null), new IdempotencyRequest("key-1", "hash-abc"));
+        StoreOutcome outcome = serviceWith(racing)
+                .store(command(null), new IdempotencyRequest("anonymous", "key-1", "hash-abc"));
 
         assertThat(outcome.replayed()).isTrue();
-        assertThat(outcome.response()).isEqualTo(winnerBody);        // the committed winner's body
+        assertThat(outcome.response()).isEqualTo(PurchaseResponse.from(winner)); // re-projected winner
     }
 
     @Test
     void a_concurrent_duplicate_key_with_a_different_payload_is_a_conflict() {
-        PurchaseResponse winnerBody = new PurchaseResponse(
-                UUID.fromString("0190a000-0000-7000-8000-0000000000ff"),
-                "Other", LocalDate.parse("2026-03-15"),
-                new BigDecimal("99.99"), "USD", Instant.parse("2026-06-03T12:00:00Z"));
-        RacingIdempotencyStore racing =
-                new RacingIdempotencyStore(new IdempotencyStore.StoredResponse("hash-WINNER", 201, winnerBody));
+        // Hash mismatch is detected before any re-projection, so the winner purchase need not exist.
+        RacingIdempotencyStore racing = new RacingIdempotencyStore(new IdempotencyStore.StoredResponse(
+                "hash-WINNER", 201, UUID.fromString("0190a000-0000-7000-8000-0000000000ff")));
 
-        assertThatThrownBy(() ->
-                        serviceWith(racing).store(command(null), new IdempotencyRequest("key-1", "hash-loser")))
+        assertThatThrownBy(() -> serviceWith(racing)
+                        .store(command(null), new IdempotencyRequest("anonymous", "key-1", "hash-loser")))
                 .isInstanceOf(IdempotencyConflictException.class);
+    }
+
+    private Purchase persistPurchase(UUID id, String description, String amount) {
+        Purchase p = new Purchase(id, description, LocalDate.parse("2026-03-15"),
+                Money.of(new BigDecimal(amount), "USD"), Instant.parse("2026-06-03T12:00:00Z"));
+        return purchases.save(p);
     }
 
     /**
@@ -148,13 +169,13 @@ class StorePurchaseServiceTest {
         }
 
         @Override
-        public Optional<StoredResponse> find(String key) {
+        public Optional<StoredResponse> find(String principal, String key) {
             return committed ? Optional.of(winner) : Optional.empty();
         }
 
         @Override
-        public void save(String key, String requestHash, UUID purchaseId, int responseStatus,
-                PurchaseResponse responseBody, Instant expiresAt) {
+        public void save(String principal, String key, String requestHash, UUID purchaseId,
+                int responseStatus, Instant expiresAt) {
             committed = true;
             throw new DuplicateIdempotencyKeyException(key, null);
         }

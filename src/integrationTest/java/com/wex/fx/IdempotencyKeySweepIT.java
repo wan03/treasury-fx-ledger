@@ -2,12 +2,10 @@ package com.wex.fx;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.wex.fx.application.dto.PurchaseResponse;
 import com.wex.fx.application.port.IdempotencyStore;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
@@ -24,6 +22,7 @@ class IdempotencyKeySweepIT extends AbstractPostgresIT {
 
     // A cutoff far in the past, so no other test's (future-dated) idempotency rows count as expired here.
     private static final Instant CUTOFF = Instant.parse("2020-06-01T00:00:00Z");
+    private static final String PRINCIPAL = "anonymous";
 
     @Autowired
     IdempotencyStore store;
@@ -40,9 +39,9 @@ class IdempotencyKeySweepIT extends AbstractPostgresIT {
         int deleted = store.deleteExpired(CUTOFF, 1000);
 
         assertThat(deleted).isEqualTo(2);
-        assertThat(store.find("sweep-expired-1")).isEmpty();
-        assertThat(store.find("sweep-expired-2")).isEmpty();
-        assertThat(store.find("sweep-fresh")).isPresent();
+        assertThat(store.find(PRINCIPAL, "sweep-expired-1")).isEmpty();
+        assertThat(store.find(PRINCIPAL, "sweep-expired-2")).isEmpty();
+        assertThat(store.find(PRINCIPAL, "sweep-fresh")).isPresent();
     }
 
     @Test
@@ -68,9 +67,6 @@ class IdempotencyKeySweepIT extends AbstractPostgresIT {
     }
 
     private void save(String key, UUID purchaseId, Instant expiresAt) {
-        PurchaseResponse body = new PurchaseResponse(
-                purchaseId, "sweep fixture", LocalDate.parse("2025-05-01"),
-                new BigDecimal("10.00"), "USD", CUTOFF);
-        store.save(key, "hash-" + key, purchaseId, 201, body, expiresAt);
+        store.save(PRINCIPAL, key, "hash-" + key, purchaseId, 201, expiresAt);
     }
 }

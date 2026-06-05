@@ -29,9 +29,9 @@ import org.springframework.beans.factory.annotation.Autowired;
  * <ul>
  *   <li><strong>Round-trip fidelity</strong> — {@code NUMERIC(19,2)} keeps scale 2 ({@code 12.30}
  *       never collapses to {@code 12.3}) and {@code TIMESTAMPTZ} preserves the {@code Instant};</li>
- *   <li><strong>JSONB replay fidelity</strong> — the stored {@link PurchaseResponse} body
- *       round-trips through {@code jsonb} byte-faithfully (exercises Jackson record deserialization,
- *       hence the {@code -parameters} build flag);</li>
+ *   <li><strong>Re-projection replay fidelity</strong> — the replay body is re-projected from the
+ *       persisted {@code purchases} row (finding #8: the idempotency table stores no body), yet equals
+ *       the original {@link PurchaseResponse} field-for-field, scale and {@code Instant} included;</li>
  *   <li><strong>The PK-violation primitive</strong> — a reused idempotency key surfaces as the
  *       domain {@link DuplicateIdempotencyKeyException}, the signal the concurrent-loser race relies
  *       on;</li>
@@ -80,16 +80,16 @@ class StorePurchasePersistenceIT extends AbstractPostgresIT {
     }
 
     @Test
-    void same_key_replays_the_committed_jsonb_body_and_mints_no_new_id() {
-        IdempotencyRequest idem = new IdempotencyRequest("it-key-replay", HASH);
+    void same_key_replays_the_reprojected_body_and_mints_no_new_id() {
+        IdempotencyRequest idem = new IdempotencyRequest("anonymous", "it-key-replay", HASH);
 
         StoreOutcome first = service.store(command(), idem);
         StoreOutcome second = service.store(command(), idem);
 
         assertThat(first.replayed()).isFalse();
         assertThat(second.replayed()).isTrue();
-        // The replay is reconstructed from jsonb, yet equals the original body field-for-field —
-        // BigDecimal scale and the Instant included. That is the JSONB + Jackson round-trip working.
+        // The replay is re-projected from the persisted purchase (no stored body), yet equals the
+        // original field-for-field — BigDecimal scale and the Instant included.
         assertThat(second.response()).isEqualTo(first.response());
         assertThat(second.response().id()).isEqualTo(first.response().id());   // no second insert
         assertThat(second.response().amount().scale()).isEqualTo(2);
@@ -102,13 +102,12 @@ class StorePurchasePersistenceIT extends AbstractPostgresIT {
                 UUID.fromString("0190a000-0000-7000-8000-0000000000a1"),
                 "fk anchor", LocalDate.parse("2026-03-15"),
                 Money.usd("5.00"), Instant.now().truncatedTo(ChronoUnit.MICROS)));
-        PurchaseResponse body = PurchaseResponse.from(purchase);
         Instant expires = Instant.now().plus(24, ChronoUnit.HOURS);
 
-        idempotency.save("it-key-dup", HASH, purchase.id(), 201, body, expires);
+        idempotency.save("anonymous", "it-key-dup", HASH, purchase.id(), 201, expires);
 
         assertThatThrownBy(() ->
-                        idempotency.save("it-key-dup", HASH, purchase.id(), 201, body, expires))
+                        idempotency.save("anonymous", "it-key-dup", HASH, purchase.id(), 201, expires))
                 .isInstanceOf(DuplicateIdempotencyKeyException.class);
     }
 
@@ -124,13 +123,12 @@ class StorePurchasePersistenceIT extends AbstractPostgresIT {
         // REQUIRED semantics both inserts must be undone — neither row may survive.
         assertThatThrownBy(() -> transactor.required(() -> {
                     purchases.save(purchase);
-                    idempotency.save("it-key-atomic", HASH, id, 201,
-                            PurchaseResponse.from(purchase), expires);
+                    idempotency.save("anonymous", "it-key-atomic", HASH, id, 201, expires);
                     throw new IllegalStateException("force rollback");
                 }))
                 .isInstanceOf(IllegalStateException.class);
 
-        assertThat(purchases.findById(id)).isEmpty();                           // purchase rolled back
-        assertThat(idempotency.find("it-key-atomic")).isEqualTo(Optional.empty()); // key rolled back too
+        assertThat(purchases.findById(id)).isEmpty();                                // purchase rolled back
+        assertThat(idempotency.find("anonymous", "it-key-atomic")).isEqualTo(Optional.empty()); // key rolled back
     }
 }

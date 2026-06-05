@@ -48,6 +48,15 @@ class PurchaseController {
     /** Contract cap on the opaque idempotency key (api-contract.md). */
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 
+    /**
+     * Header carrying the caller identity an upstream auth gateway has already verified, used to scope
+     * idempotency keys per caller (finding #6). MUST be gateway-trusted — never accept a client-spoofable
+     * value once real auth exists. Absent (no gateway today) → the {@code anonymous} sentinel, so behavior
+     * is byte-identical to the pre-scoping single-tenant world.
+     */
+    private static final String PRINCIPAL_HEADER = "X-Client-Id";
+    private static final String DEFAULT_PRINCIPAL = "anonymous";
+
     private final StorePurchaseService storePurchases;
     private final GetPurchaseService getPurchases;
 
@@ -59,11 +68,13 @@ class PurchaseController {
     @PostMapping
     ResponseEntity<PurchaseResponse> create(
             @RequestBody CreatePurchaseRequest request,
-            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(name = PRINCIPAL_HEADER, required = false) String principal) {
 
         StorePurchaseCommand command = new StorePurchaseCommand(
                 request.description(), request.amount(), request.transactionDate(), request.currency());
-        StoreOutcome outcome = storePurchases.store(command, idempotencyOf(command, idempotencyKey));
+        StoreOutcome outcome =
+                storePurchases.store(command, idempotencyOf(command, idempotencyKey, principal));
 
         PurchaseResponse body = outcome.response();
         ResponseEntity.BodyBuilder builder =
@@ -91,7 +102,8 @@ class PurchaseController {
      * same logical request fingerprints identically regardless of JSON whitespace or key order, while
      * a genuinely different payload under the same key still collides to a {@code 409}.
      */
-    private static IdempotencyRequest idempotencyOf(StorePurchaseCommand command, String key) {
+    private static IdempotencyRequest idempotencyOf(
+            StorePurchaseCommand command, String key, String principal) {
         if (key == null || key.isBlank()) {
             return null;
         }
@@ -99,7 +111,11 @@ class PurchaseController {
             throw new MalformedRequestException(
                     "Idempotency-Key must be at most " + MAX_IDEMPOTENCY_KEY_LENGTH + " characters.");
         }
-        return new IdempotencyRequest(key, requestHash(command));
+        return new IdempotencyRequest(principalOrDefault(principal), key, requestHash(command));
+    }
+
+    private static String principalOrDefault(String principal) {
+        return (principal == null || principal.isBlank()) ? DEFAULT_PRINCIPAL : principal.trim();
     }
 
     private static String requestHash(StorePurchaseCommand command) {

@@ -17,6 +17,20 @@
 CREATE ROLE migration WITH LOGIN PASSWORD 'change-me-migration';
 CREATE ROLE app       WITH LOGIN PASSWORD 'change-me-app';
 
+-- Durable session guards on the APP role (finding #1). Connection-init-sql SETs do NOT survive
+-- PgBouncer *transaction* pooling (Neon's -pooler endpoint), so the timeouts can be inert in prod.
+-- Role-level defaults DO survive — Postgres applies them at session start on the server, before any
+-- pooled hand-off — so a stuck statement/lock can never pin a connection. Applied to `app` ONLY:
+-- Flyway connects as `migration` and migrations may legitimately run long.
+--   • statement_timeout 3s — every app query is a sub-ms PK op, so 3s is generous headroom.
+--   • lock_timeout 2s      — fail fast rather than queue behind a held row lock.
+--   • idle_in_transaction 10s — reap a connection abandoned mid-transaction.
+-- Prod (Neon) must apply the same ALTER ROLE out of band (it provisions roles itself); see README /
+-- data-model.md. application.yml keeps connection-init-sql as belt-and-braces for the direct endpoint.
+ALTER ROLE app SET statement_timeout = '3s';
+ALTER ROLE app SET lock_timeout = '2s';
+ALTER ROLE app SET idle_in_transaction_session_timeout = '10s';
+
 -- migration owns the schema so it can create/alter/drop objects freely.
 ALTER SCHEMA public OWNER TO migration;
 GRANT ALL ON SCHEMA public TO migration;
