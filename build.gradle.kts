@@ -52,7 +52,7 @@ repositories {
 val springdocVersion = "2.8.17"   // latest 2.x line (Boot 3.x); 3.x is for Boot 4
 val resilience4jVersion = "2.3.0"
 val archunitVersion = "1.4.2"
-val jqwikVersion = "1.9.3"         // jqwik engine (property-based); runs on the JUnit Platform below
+val jqwikVersion = "1.10.1"         // jqwik engine (property-based); runs on the JUnit Platform below
 // JUnit alignment. Gradle 8.14.5's test worker hard-requires junit-platform-launcher 1.14.x
 // (its processor calls OutputDirectoryCreator, added in platform 1.13). Spring Boot 3.5.14's BOM
 // force-pins junit-platform-engine/commons to 1.12.2, so the launcher (1.14) and engine (1.12)
