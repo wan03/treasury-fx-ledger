@@ -25,7 +25,7 @@ jobs:
     name: fast gate (unit + slice + ArchUnit + coverage floor)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Validate the Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6

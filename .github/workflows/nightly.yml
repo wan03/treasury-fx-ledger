@@ -28,7 +28,7 @@ jobs:
     name: integration (Testcontainers + WireMock)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: gradle/actions/wrapper-validation@v6
       - uses: actions/setup-java@v5
         with:
@@ -50,7 +50,7 @@ jobs:
     name: mutation (PIT, domain core)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: gradle/actions/wrapper-validation@v6
       - uses: actions/setup-java@v5
         with:
@@ -73,7 +73,7 @@ jobs:
     # The canary hits the real Treasury API; a rename/outage must SURFACE, not fail the pipeline.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: gradle/actions/wrapper-validation@v6
       - uses: actions/setup-java@v5
         with:
@@ -102,7 +102,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: gradle/actions/wrapper-validation@v6
       - uses: actions/setup-java@v5
         with:
