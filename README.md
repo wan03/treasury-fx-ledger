@@ -1,21 +1,14 @@
-# WEX Currency Ledger
+# Treasury FX Ledger
 
 > A production-grade service that **stores USD purchase transactions** and **returns them converted**
 > into a target currency using the official **U.S. Treasury _Reporting Rates of Exchange_** API.
 > **Java 21 · Spring Boot 3.5 · PostgreSQL · hexagonal architecture.**
 
-### ▶ Try it live — **[currency-ledger.onrender.com](https://currency-ledger.onrender.com)**
+**→ [Run it locally](#run-it-locally) (one command)**
 
-**The home page _is_ the app — an interactive explorer, nothing to install.** One page switches between the
-**Codebase** (an architecture map, a browsable decision log, a code tour, and a **live rate-selection
-playground** where you drag a purchase date and watch the Treasury rate get chosen) and the **Live App**
-(an API playground that drives the real service same-origin — `POST /v1/purchases` →
-`GET …/conversions/EUR`, live). Just open the link and explore.
-
-> **Prefer to run it yourself?** → **[Run it locally](#run-it-locally)** (one command).
->
-> **Honest cold-start note:** the free hosting tier sleeps after ~15 min idle, so the first request after a
-> pause takes ~1 min while the instance wakes — a free-tier trait, not an app warm-up cost.
+The app ships with an **interactive explorer** at `/` — an architecture map, a browsable decision log,
+a code tour, a **rate-selection playground** where you drag a purchase date and watch the Treasury
+rate get chosen, and an API playground for `POST /v1/purchases` → `GET …/conversions/EUR`.
 
 _(The explorer is static — [`explore.html`](src/main/resources/static/explore.html) + its same-origin
 siblings `explore.css` / `explore.js`, no build step — and also opens standalone from disk.)_
@@ -51,7 +44,7 @@ resilience, security, and the test strategy.
 
 | If you want to… | Read this section | …or go straight to the source |
 |---|---|---|
-| Run it on your machine | [Run it locally](#run-it-locally) | [`Makefile`](Makefile) |
+| Run it | [Run it locally](#run-it-locally) | [`Makefile`](Makefile) |
 | Understand the shape of the system | [Architecture](#architecture) | [`docs/builder/plan.md`](docs/builder/plan.md) |
 | Judge the money handling | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`Money.java`](src/main/java/com/wex/fx/domain/money/Money.java) |
 | Inspect the **rate-selection rule** (the crux) | [Architecture](#architecture) | [`RateSelector.java`](src/main/java/com/wex/fx/domain/rate/RateSelector.java) · [`rate-selection.md`](docs/builder/rate-selection.md) |
@@ -60,18 +53,14 @@ resilience, security, and the test strategy.
 | Evaluate the test strategy | [Testing & quality gates](#testing--quality-gates) | [`test-strategy.md`](docs/builder/test-strategy.md) |
 | See the resilience story | [Engineering signal](#the-engineering-signal-where-the-care-went) | [`ResilientRateFetcher.java`](src/main/java/com/wex/fx/adapter/treasury/ResilientRateFetcher.java) |
 | Read **why** any decision was made | — | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) (ADRs `D-01…D-13`, Treasury facts `F1…F9`) |
-| Know what I assumed & would ask | [Assumptions](#assumptions-committed-defaults--overridable-if-the-brief-intends-otherwise) | [`HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md) |
+| Explore design assumptions & open questions | [Design assumptions](#design-assumptions--defaults) | [`docs/HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md) |
 
-> **Two lenses on the same work:** this README is the *narrative*; the **live app's home page**
-> ([currency-ledger.onrender.com](https://currency-ledger.onrender.com), source
-> [`explore.html`](src/main/resources/static/explore.html)) is the *interactive* version (and it links
-> back here). Use whichever suits you.
+> **Two lenses on the same work:** this README is the *narrative*; the **interactive explorer**
+> (served at `/` when you run the app) is the *interactive* version — and it links back here.
 
 ---
 
 ## Run it locally
-
-> The live app above needs nothing installed. This section is **only** if you'd rather run it yourself.
 
 **Prerequisites:** JDK 21 (Gradle auto-provisions a toolchain if missing) and a container runtime
 (Docker Desktop, or rootless Podman with a compose provider). The Gradle wrapper is committed — nothing else.
@@ -169,7 +158,7 @@ seam means the acquisition strategy is a config flag, not a rewrite. _(See [`pla
   own guidance (F8, source-quoted) says an **intra-quarter amendment** is a new row with a later
   `effective_date`, valid for the rest of the quarter; selecting on `record_date` silently mis-rates a
   post-amendment purchase. The two readings are **identical for every non-amended currency** and diverge
-  only across an amendment — so the literal-brief reading is a one-line flip
+  only across an amendment — so the `record_date` reading is a one-line flip
   (`fx.rates.rate-date-basis=record_date`), default `effective_date`. A test pins both:
   agree off-amendment, diverge on the Argentina Q2→Q3 amendment. _(D-02, F4/F8,
   [`rate-selection.md`](docs/builder/rate-selection.md))_
@@ -245,38 +234,15 @@ and fill in. Profiles: `dev` (local compose) · `test` · `prod`.
 All rate tunables (the 6-month window, timeouts, retry/breaker thresholds, cache TTLs) are bound config,
 not magic numbers — see `fx.rates.*` in [`application.yml`](src/main/resources/application.yml).
 
-### Keeping the demo warm
-
-The free hosting tier sleeps after ~15 min idle (~1-min cold start). To avoid that during review hours,
-an **external uptime pinger** hits `GET /actuator/health` on a schedule — this is the primary keep-warm.
-An external service (e.g. **cron-job.org** / UptimeRobot) is used rather than a GitHub Actions `schedule`,
-because GitHub cron is best-effort and heavily throttled (in practice it never fired reliably here).
-
-Recommended pinger config:
-
-| Setting | Value |
-|---|---|
-| URL | `https://currency-ledger.onrender.com/actuator/health` (GET, expect `200`) |
-| Schedule (cron) | `*/10 13-23 * * 1-5` — every 10 min, **13:00–23:00 UTC**, Mon–Fri |
-
-The window is deliberate, not 24/7: keeping the instance always-on would burn ~730 of Render's
-**750 free instance-hours per month**, so the ping is scoped to likely review hours (≈ 06:00–16:00
-America/Los_Angeles, Render's `oregon` region) — set the pinger's timezone to use local business hours
-instead. The first request after a fresh **deploy** still cold-starts; the pinger keeps it warm thereafter,
-and the explorer shows a friendly “waking…” state for that case regardless.
-
-[`keep-warm.yml`](.github/workflows/keep-warm.yml) remains as a **manual one-click fallback** (Actions →
-*keep-warm* → *Run workflow*) to warm the instance on demand — its unreliable `schedule` trigger was removed.
-
 ---
 
-## Assumptions (committed defaults — overridable if the brief intends otherwise)
+## Design assumptions & defaults
 
-The brief leaves several choices open; each is resolved by a documented default and remains a one-line
-config/flag change if steered otherwise.
+Several design choices are intentionally left open; each has a committed default and remains a one-line
+config change if steered otherwise.
 
 1. **`effective_date`, not `record_date`**, governs rate selection — intra-quarter amendments are real;
-   the literal-brief `record_date` reading is shipped behind `fx.rates.rate-date-basis` (identical except across an amendment). _(D-02)_
+   the `record_date` reading is shipped behind `fx.rates.rate-date-basis` (identical except across an amendment). _(D-02)_
 2. **Reject amounts with >2 dp (`400`), never round** the principal; the only rounding is the conversion output. _(D-05)_
 3. **Future-dated purchases are rejected;** too-old ones are stored but fail conversion with `422 NO_RATE_AVAILABLE`. _(D-06)_
 4. **`USD` target is an in-app identity** (rate `1.00`, no Treasury call) and is never in the currency map. _(D-07)_
@@ -290,12 +256,11 @@ config/flag change if steered otherwise.
 A single 1000-row window page is assumed sufficient per currency (Treasury's per-currency history is
 quarterly and small); full pagination is a documented future extension.
 
-### Questions I would ask the hiring manager
+### Open design questions
 
-These are the seven I'd raise; I committed to a default for each so the build stayed unblocked. Full draft
-in [`docs/HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md).
+Each has a committed default; all are a one-line config change if steered otherwise. Full discussion in [`docs/HIRING_MANAGER_QUESTIONS.md`](docs/HIRING_MANAGER_QUESTIONS.md).
 
-1. **Currency input contract** — ISO-4217 + we own the map, or raw `country_currency_desc`? → _ISO-4217 + curated map._
+1. **Currency input contract** — ISO-4217 + curated map, or raw `country_currency_desc`? → _ISO-4217 + curated map._
 2. **Authoritative rate date** — `record_date` or `effective_date`? → _`effective_date`._
 3. **Expected scale / read pattern** — to right-size the rates strategy. → _Built all four adapters; default A._
 4. **Amount precision** — reject >2 dp or round? → _Reject; never mutate the principal._
@@ -323,7 +288,7 @@ docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract,
 
 | Doc | Read it for |
 |---|---|
-| [`/` → `explore.html`](src/main/resources/static/explore.html) | the **interactive** home page (codebase ⟷ live app, rate-selection playground) — served by the app |
+| [`/` → `explore.html`](src/main/resources/static/explore.html) | the **interactive** home page — architecture, decisions, rate-selection playground — served by the app |
 | [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) | the _why_ — every decision (`D-01…D-13`) + verified Treasury facts (`F1…F9`) |
 | [`docs/builder/spec.md`](docs/builder/spec.md) | _what_ to build — acceptance criteria (R1/R2) |
 | [`docs/builder/plan.md`](docs/builder/plan.md) | architecture, the port/adapter seam |
@@ -337,4 +302,4 @@ docs/                DECISION_LOG.md (the why) + builder/ (spec, plan, contract,
 ## Notes
 
 - **Data source:** U.S. Treasury Fiscal Data — _Reporting Rates of Exchange_ (public domain, no key required).
-- **Take-home exercise** for WEX Corporate Payments; proprietary to the author for evaluation purposes.
+- **Built with AI assistance** — architecture, decisions, and code developed collaboratively with Claude (Anthropic).
