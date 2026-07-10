@@ -24,7 +24,7 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
     jacoco
     id("info.solidsoft.pitest") version "1.19.0"
-    id("org.flywaydb.flyway") version "12.8.1"  // matches Boot 3.5.14's managed Flyway
+    id("org.flywaydb.flyway") version "12.11.0"  // matches Boot 3.5.14's managed Flyway
     // CycloneDX SBOM (finding #2): `./gradlew cyclonedxBom` → build/reports/bom.json, which the nightly
     // Trivy job scans so the CVE scan enumerates REAL Java deps. Not wired into `check` — PR gate stays fast.
     // v2.x required: 1.x throws UnsupportedOperationException under Gradle 9 (the wrapper is on 9.5.1).
