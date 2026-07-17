@@ -28,7 +28,7 @@ plugins {
     // CycloneDX SBOM (finding #2): `./gradlew cyclonedxBom` → build/reports/bom.json, which the nightly
     // Trivy job scans so the CVE scan enumerates REAL Java deps. Not wired into `check` — PR gate stays fast.
     // v2.x required: 1.x throws UnsupportedOperationException under Gradle 9 (the wrapper is on 9.5.1).
-    id("org.cyclonedx.bom") version "3.2.4"
+    id("org.cyclonedx.bom") version "3.3.0"
 }
 
 group = "com.wex"
